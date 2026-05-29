@@ -19,9 +19,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Lê API keys dos Secrets do Streamlit (ou deixa digitar na sidebar)
+default_api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+
 with st.sidebar:
     st.title("⚙️ Configurações")
-    api_key = st.text_input("Anthropic API Key", type="password", placeholder="sk-ant-...")
+    api_key = st.text_input("Anthropic API Key", value=default_api_key, type="password", placeholder="sk-ant-...")
     st.divider()
     st.subheader("Ativos")
     PRESETS = {
