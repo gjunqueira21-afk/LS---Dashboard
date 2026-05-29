@@ -166,16 +166,20 @@ def fetch_brapi(ticker: str, token: str) -> dict:
     t = ticker.upper().replace(".SA", "").strip()
     url = f"https://brapi.dev/api/quote/{t}"
     params = {"modules": "defaultKeyStatistics,financialData,summaryProfile,price"}
+    headers = {}
     if token:
+        # brapi PRO aceita tanto Bearer header quanto query param — usamos os dois pra garantir
+        headers["Authorization"] = f"Bearer {token}"
         params["token"] = token
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, headers=headers, timeout=15)
         data = r.json()
         if "results" in data and data["results"]:
             return data["results"][0]
-    except Exception:
-        pass
-    return {}
+        # Devolve erro pro debug
+        return {"_error": data.get("message") or data.get("error") or f"HTTP {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"_error": str(e)}
 
 def safe_pct(val, decimals=2):
     """Formata número como percentual com segurança"""
@@ -205,8 +209,8 @@ def fmt_market_cap(val):
 def parse_fundamentals(ticker: str, token: str) -> dict:
     """Extrai e normaliza métricas fundamentais do retorno da brapi"""
     info = fetch_brapi(ticker, token)
-    if not info:
-        return None
+    if not info or "_error" in info:
+        return {"_error": (info or {}).get("_error", "sem resposta"), "Ticker": ticker}
 
     ks = info.get("defaultKeyStatistics") or {}
     fd = info.get("financialData") or {}
@@ -418,14 +422,15 @@ else:
     for i, t in enumerate(tickers):
         prog.progress((i + 1) / len(tickers), text=f"Carregando {t}…")
         row = parse_fundamentals(t, brapi_key)
-        if row:
+        if row and "_error" not in row:
             rows.append(row)
         else:
-            errors.append(t)
+            err_msg = (row or {}).get("_error", "erro desconhecido")
+            errors.append(f"{t} ({err_msg})")
     prog.empty()
 
     if errors:
-        st.warning(f"Não foi possível carregar: {', '.join(errors)}")
+        st.warning(f"Não foi possível carregar:\n\n- " + "\n- ".join(errors))
 
     if not rows:
         st.error("Nenhum dado encontrado. Verifique os tickers e o token da brapi.dev.")
