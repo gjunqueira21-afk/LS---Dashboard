@@ -165,7 +165,7 @@ def fetch_brapi(ticker: str, token: str) -> dict:
     """Busca dados fundamentais de um ticker via brapi.dev"""
     t = ticker.upper().replace(".SA", "").strip()
     url = f"https://brapi.dev/api/quote/{t}"
-    params = {"modules": "defaultKeyStatistics,financialData,summaryProfile,price"}
+    params = {"modules": "defaultKeyStatistics,financialData,summaryProfile"}
     headers = {}
     if token:
         # brapi PRO aceita tanto Bearer header quanto query param — usamos os dois pra garantir
@@ -215,7 +215,7 @@ def parse_fundamentals(ticker: str, token: str) -> dict:
     ks = info.get("defaultKeyStatistics") or {}
     fd = info.get("financialData") or {}
     sp = info.get("summaryProfile") or {}
-    pr = info.get("price") or {}
+    pr = {}  # módulo price não disponível neste plano brapi
 
     # brapi retorna dividendYield como decimal (0.08 = 8%) em summaryProfile
     # e às vezes em defaultKeyStatistics — normalizar:
@@ -239,7 +239,7 @@ def parse_fundamentals(ticker: str, token: str) -> dict:
 
     row = {
         "Ticker":         ticker.upper().replace(".SA", ""),
-        "Nome":           pr.get("longName") or info.get("longName", ticker),
+        "Nome":           sp.get("longName") or ks.get("longName") or info.get("longName", ticker),
         "Setor":          sp.get("sector") or info.get("sector", "—"),
         "P/L":            ks.get("trailingPE") or info.get("trailingPE"),
         "P/L Fwd":        ks.get("forwardPE")  or info.get("forwardPE"),
@@ -255,7 +255,7 @@ def parse_fundamentals(ticker: str, token: str) -> dict:
         "Cresc. Receita (%)": to_pct(fd.get("revenueGrowth")),
         "Cresc. Lucro (%)":   to_pct(fd.get("earningsGrowth") or ks.get("earningsGrowth")),
         "Beta":           ks.get("beta") or info.get("beta"),
-        "Market Cap":     pr.get("marketCap") or info.get("marketCap"),
+        "Market Cap":     ks.get("marketCap") or info.get("marketCap"),
     }
     return row
 
