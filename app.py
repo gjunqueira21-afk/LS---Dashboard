@@ -65,7 +65,7 @@ with st.sidebar:
         run_btn      = st.button("▶ Analisar", use_container_width=True, type="primary")
 
     else:
-        brapi_key = st.text_input("brapi.dev Token", value=default_brapi_key, type="password", placeholder="token (opcional)")
+        brapi_key = st.text_input("brapi.dev Token", value=default_brapi_key, type="password", placeholder="token")
         st.divider()
         st.subheader("Empresas")
         PRESETS_FUND = {
@@ -77,14 +77,10 @@ with st.sidebar:
         }
         fund_preset = st.selectbox("Grupo pré-definido", list(PRESETS_FUND.keys()))
         default_tickers = PRESETS_FUND[fund_preset]
-        fund_tickers_raw = st.text_area(
-            "Tickers (um por linha, sem .SA)",
-            value=default_tickers,
-            height=160,
-        )
+        fund_tickers_raw = st.text_area("Tickers (um por linha, sem .SA)", value=default_tickers, height=160)
         load_btn = st.button("🔍 Carregar Fundamentos", use_container_width=True, type="primary")
         st.divider()
-        st.caption("Dados: brapi.dev (B3 — dados confiáveis)")
+        st.caption("Dados: brapi.dev (B3)")
 
 @st.cache_data(ttl=30)
 def fetch(ticker, period, interval):
@@ -150,7 +146,7 @@ Estruture sua resposta em:
 2. Qualidade estatística do par
 3. Sinal operacional
 4. Riscos e alertas
-5. Resumo executivo (2-3 linhas)"""
+5. Resumo executivo"""
     with client.messages.stream(model="claude-sonnet-4-6", max_tokens=1200,
                                  messages=[{"role": "user", "content": prompt}]) as stream:
         return stream.get_final_text()
@@ -160,16 +156,18 @@ def fetch_brapi(ticker: str, token: str) -> dict:
     t = ticker.upper().replace(".SA", "").strip()
     url = f"https://brapi.dev/api/quote/{t}"
     params = {"modules": "defaultKeyStatistics,financialData,summaryProfile,price"}
+    headers = {}
     if token:
+        headers["Authorization"] = f"Bearer {token}"
         params["token"] = token
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, headers=headers, timeout=15)
         data = r.json()
         if "results" in data and data["results"]:
             return data["results"][0]
-    except Exception:
-        pass
-    return {}
+        return {"_error": data.get("message") or data.get("error") or f"HTTP {r.status_code}: {str(r.text)[:200]}"}
+    except Exception as e:
+        return {"_error": str(e)}
 
 def safe_pct(val, decimals=2):
     if val is None or (isinstance(val, float) and np.isnan(val)):
@@ -192,8 +190,9 @@ def fmt_market_cap(val):
 
 def parse_fundamentals(ticker: str, token: str) -> dict:
     info = fetch_brapi(ticker, token)
-    if not info:
-        return None
+    if not info or "_error" in info:
+        return {"_error": (info or {}).get("_error", "sem resposta"), "Ticker": ticker}
+
     ks = info.get("defaultKeyStatistics") or {}
     fd = info.get("financialData") or {}
     sp = info.get("summaryProfile") or {}
@@ -236,26 +235,26 @@ def parse_fundamentals(ticker: str, token: str) -> dict:
 
 if mode == "📈 Long / Short":
     st.title("📊 Long / Short Dashboard")
-    st.caption("Ratio · Z-Score · Cointegração · Análise via Claude AI")
+    st.caption("Ratio · Z-Score · Cointegração · Claude AI")
 
     if auto_refresh:
         time.sleep(30)
         st.rerun()
 
     if not (run_btn or auto_refresh):
-        st.info("Configure os ativos na barra lateral e clique em **▶ Analisar**.")
+        st.info("Configure os ativos e clique em **▶ Analisar**.")
         st.stop()
 
     if not long_ticker or not short_ticker:
-        st.error("Preencha os dois tickers antes de analisar.")
+        st.error("Preencha os dois tickers.")
         st.stop()
 
-    with st.spinner(f"Baixando dados de {long_ticker} e {short_ticker}…"):
+    with st.spinner(f"Baixando dados…"):
         long_data  = fetch(long_ticker,  period, interval)
         short_data = fetch(short_ticker, period, interval)
 
     if long_data.empty or short_data.empty:
-        st.error("Não foi possível baixar dados. Verifique os tickers.")
+        st.error("Não foi possível baixar dados.")
         st.stop()
 
     ratio_series = compute_ratio(long_data, short_data)
@@ -340,7 +339,7 @@ if mode == "📈 Long / Short":
     st.divider()
     st.subheader("🤖 Análise Claude AI")
     if not api_key:
-        st.warning("Insira sua Anthropic API Key na barra lateral.")
+        st.warning("Insira sua Anthropic API Key.")
     else:
         if st.button("🧠 Gerar análise com Claude", type="secondary"):
             with st.spinner("Claude analisando…"):
@@ -357,17 +356,17 @@ if mode == "📈 Long / Short":
         st.markdown("""
 **📐 Ratio** — Preço do LONG ÷ preço do SHORT.
 
-**📊 Z-Score** — Distância do Ratio em relação à sua média histórica (desvios padrão). Z > +2 → SHORT ratio. Z < -2 → LONG ratio.
+**📊 Z-Score** — Distância do Ratio em relação à média histórica (desvios padrão). Z > +2 → SHORT ratio. Z < -2 → LONG ratio.
 
 **🔗 Correlação** — Sincronia dos ativos (−1 a +1). Acima de 0.7 é ideal.
 
-**🧪 Cointegração p-valor** — Engle-Granger. p < 0.05 confirma relação de longo prazo.
+**🧪 Cointegração p-valor** — Engle-Granger. p < 0.05 = relação de longo prazo.
 
-**📉 ADF spread p** — Estacionaridade do spread. p < 0.05 = spread reverte à média.
+**📉 ADF spread p** — Estacionaridade. p < 0.05 = spread reverte à média.
 
 **⚖️ Hedge Ratio (β)** — Quanto vender no SHORT por unidade de LONG comprado.
 
-**⚡ Sinal** — Conclusão prática: LONG ratio, SHORT ratio, FECHAR ou NEUTRO.
+**⚡ Sinal** — LONG ratio, SHORT ratio, FECHAR ou NEUTRO.
         """)
     st.caption(f"Dados Yahoo Finance · {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
@@ -376,7 +375,7 @@ else:
     st.caption("Dados via brapi.dev · Fonte: B3 / CVM")
 
     if not load_btn:
-        st.info("Selecione um grupo ou digite os tickers e clique em **🔍 Carregar Fundamentos**.")
+        st.info("Selecione um grupo e clique em **🔍 Carregar Fundamentos**.")
         st.stop()
 
     tickers = [t.strip().upper().replace(".SA", "") for t in fund_tickers_raw.splitlines() if t.strip()]
@@ -390,16 +389,18 @@ else:
     for i, t in enumerate(tickers):
         prog.progress((i + 1) / len(tickers), text=f"Carregando {t}…")
         row = parse_fundamentals(t, brapi_key)
-        if row:
+        if row and "_error" not in row:
             rows.append(row)
         else:
-            errors.append(t)
+            err_msg = (row or {}).get("_error", "erro desconhecido")
+            errors.append(f"{t} ({err_msg})")
     prog.empty()
 
     if errors:
-        st.warning(f"Não foi possível carregar: {', '.join(errors)}")
+        st.warning("Não foi possível carregar:\n\n- " + "\n- ".join(errors))
+
     if not rows:
-        st.error("Nenhum dado encontrado. Verifique tickers e o token brapi.dev.")
+        st.error("Nenhum dado encontrado. Verifique o token brapi.dev (PRO usa Bearer).")
         st.stop()
 
     df = pd.DataFrame(rows)
@@ -511,18 +512,18 @@ else:
     st.divider()
     with st.expander("ℹ️ Manual de Métricas — Fundamentos"):
         st.markdown("""
-**P/L** — Quantos anos de lucro estão embutidos no preço. Menor = mais barato.
+**P/L** — Anos de lucro embutidos no preço. Menor = mais barato.
 **P/L Fwd** — P/L com lucro futuro estimado.
-**P/VP** — Preço ÷ patrimônio líquido. <1 = desconto, >3 = caro.
-**EV/EBITDA** — Valor da empresa (com dívida) ÷ EBITDA. Menor = mais barato.
+**P/VP** — Preço ÷ patrimônio. <1 = desconto.
+**EV/EBITDA** — Valor da empresa ÷ EBITDA. Menor = mais barato.
 **ROE (%)** — Retorno sobre patrimônio. >15% é bom.
-**ROA (%)** — Retorno sobre ativos. Mais conservador que ROE.
+**ROA (%)** — Retorno sobre ativos.
 **Margem Líquida (%)** — % da receita que vira lucro.
 **Margem EBITDA (%)** — % da receita que vira lucro operacional.
-**Div. Yield (%)** — Dividendos ÷ preço. >6% no BR é generoso.
-**Dívida/PL** — Alavancagem. >2x = alta; <1x = conservador.
-**Liq. Corrente** — Ativo circulante ÷ passivo circulante. >1.5 é saudável.
+**Div. Yield (%)** — Dividendos ÷ preço.
+**Dívida/PL** — Alavancagem.
+**Liq. Corrente** — Saúde financeira de curto prazo.
 **Cresc. Receita / Lucro (%)** — Crescimento período sobre período.
-**Beta** — Sensibilidade ao mercado. <1 = defensivo; >1 = agressivo.
+**Beta** — Sensibilidade ao mercado.
         """)
     st.caption(f"Dados brapi.dev · {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
