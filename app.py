@@ -3,7 +3,6 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 from plotly.subplots import make_subplots
 from statsmodels.tsa.stattools import coint, adfuller
 import anthropic
@@ -17,77 +16,80 @@ st.markdown("""
     .signal-long    { color: #a6e3a1; font-weight: bold; font-size: 1.4rem; }
     .signal-short   { color: #f38ba8; font-weight: bold; font-size: 1.4rem; }
     .signal-neutral { color: #cdd6f4; font-weight: bold; font-size: 1.4rem; }
-    .metric-good    { color: #a6e3a1; }
-    .metric-warn    { color: #f9e2af; }
-    .metric-bad     { color: #f38ba8; }
 </style>
 """, unsafe_allow_html=True)
 
 default_api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
 
-# ── Sidebar ──────────────────────────────────────────────────────────────────
+PLOTLY_COLORS = ["#cba6f7", "#a6e3a1", "#f38ba8", "#89dceb", "#fab387", "#f9e2af", "#b4befe", "#94e2d5"]
+
+
+# ════════════════════════════════════════════════════════════════════
+# SIDEBAR — mode selector + conditional controls
+# ════════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.title("⚙️ Configurações")
+    mode = st.radio("Painel", ["📈 Long / Short", "🏦 Fundamentos"], label_visibility="collapsed")
+    st.divider()
     api_key = st.text_input("Anthropic API Key", value=default_api_key, type="password", placeholder="sk-ant-...")
     st.divider()
 
-    # Long/Short config
-    st.subheader("📈 Long / Short")
-    PRESETS = {
-        "BTC / ETH":        ("BTC-USD",   "ETH-USD"),
-        "PETR4 / VALE3":    ("PETR4.SA",  "VALE3.SA"),
-        "ITUB4 / BBDC4":    ("ITUB4.SA",  "BBDC4.SA"),
-        "MGLU3 / VIIA3":    ("MGLU3.SA",  "VIIA3.SA"),
-        "SPY / QQQ":        ("SPY",       "QQQ"),
-        "GLD / SLV":        ("GLD",       "SLV"),
-        "PETR4 / BRKM5":    ("PETR4.SA",  "BRKM5.SA"),
-        "Custom":           ("",          ""),
-    }
-    preset = st.selectbox("Par pré-definido", list(PRESETS.keys()))
-    default_long, default_short = PRESETS[preset]
-    col1, col2 = st.columns(2)
-    with col1:
-        long_ticker = st.text_input("LONG (comprado)", value=default_long).upper().strip()
-    with col2:
-        short_ticker = st.text_input("SHORT (vendido)", value=default_short).upper().strip()
+    if mode == "📈 Long / Short":
+        st.subheader("Ativos")
+        PRESETS = {
+            "BTC / ETH":     ("BTC-USD",  "ETH-USD"),
+            "PETR4 / VALE3": ("PETR4.SA", "VALE3.SA"),
+            "ITUB4 / BBDC4": ("ITUB4.SA", "BBDC4.SA"),
+            "MGLU3 / VIIA3": ("MGLU3.SA", "VIIA3.SA"),
+            "SPY / QQQ":     ("SPY",      "QQQ"),
+            "GLD / SLV":     ("GLD",      "SLV"),
+            "PETR4 / BRKM5": ("PETR4.SA", "BRKM5.SA"),
+            "Custom":        ("",         ""),
+        }
+        preset = st.selectbox("Par pré-definido", list(PRESETS.keys()))
+        default_long, default_short = PRESETS[preset]
+        col1, col2 = st.columns(2)
+        with col1:
+            long_ticker = st.text_input("LONG", value=default_long).upper().strip()
+        with col2:
+            short_ticker = st.text_input("SHORT", value=default_short).upper().strip()
 
-    period_map = {"1 mês": "1mo", "3 meses": "3mo", "6 meses": "6mo", "1 ano": "1y", "2 anos": "2y", "5 anos": "5y"}
-    period_label = st.selectbox("Histórico", list(period_map.keys()), index=2)
-    period = period_map[period_label]
-    interval_map = {"Diário": "1d", "Semanal": "1wk", "Horário": "1h"}
-    interval_label = st.selectbox("Intervalo", list(interval_map.keys()))
-    interval = interval_map[interval_label]
-    z_window = st.slider("Janela Z-Score (dias)", 10, 120, 30)
-    z_entry  = st.slider("Entrada (|Z| >)", 0.5, 3.0, 2.0, 0.1)
-    z_exit   = st.slider("Saída  (|Z| <)", 0.0, 1.5, 0.5, 0.1)
-    auto_refresh = st.toggle("Auto-refresh (30s)", value=False)
-    run_btn = st.button("▶ Analisar", use_container_width=True, type="primary")
+        st.divider()
+        st.subheader("Período")
+        period_map = {"1 mês": "1mo", "3 meses": "3mo", "6 meses": "6mo", "1 ano": "1y", "2 anos": "2y", "5 anos": "5y"}
+        period = period_map[st.selectbox("Histórico", list(period_map.keys()), index=2)]
+        interval_map = {"Diário": "1d", "Semanal": "1wk", "Horário": "1h"}
+        interval = interval_map[st.selectbox("Intervalo", list(interval_map.keys()))]
+        st.divider()
+        z_window = st.slider("Janela Z-Score (dias)", 10, 120, 30)
+        z_entry  = st.slider("Entrada (|Z| >)", 0.5, 3.0, 2.0, 0.1)
+        z_exit   = st.slider("Saída  (|Z| <)", 0.0, 1.5, 0.5, 0.1)
+        auto_refresh = st.toggle("Auto-refresh (30s)", value=False)
+        run_btn = st.button("▶ Analisar", use_container_width=True, type="primary")
 
-    st.divider()
-
-    # Fundamentos config
-    st.subheader("🏦 Fundamentos")
-    FUND_PRESETS = {
-        "Bancos BR":      "ITUB4.SA, BBDC4.SA, SANB11.SA, BBAS3.SA",
-        "Petro/Energia":  "PETR4.SA, PRIO3.SA, CSAN3.SA, UGPA3.SA",
-        "Varejo BR":      "MGLU3.SA, AMER3.SA, LREN3.SA, SBFG3.SA",
-        "Big Techs US":   "AAPL, MSFT, GOOGL, META, AMZN",
-        "ETFs":           "SPY, QQQ, IWM, EEM",
-        "Custom":         "",
-    }
-    fund_preset = st.selectbox("Grupo pré-definido", list(FUND_PRESETS.keys()), key="fund_preset")
-    default_tickers_str = FUND_PRESETS[fund_preset]
-    fund_tickers_input = st.text_area(
-        "Tickers (separados por vírgula)",
-        value=default_tickers_str,
-        height=80,
-        key="fund_tickers",
-        placeholder="PETR4.SA, VALE3.SA, ITUB4.SA",
-    )
-    fund_btn = st.button("🔍 Carregar Fundamentos", use_container_width=True, type="primary")
+    else:
+        st.subheader("🏦 Fundamentos")
+        FUND_PRESETS = {
+            "Bancos BR":     "ITUB4.SA, BBDC4.SA, SANB11.SA, BBAS3.SA",
+            "Petro/Energia": "PETR4.SA, PRIO3.SA, CSAN3.SA, UGPA3.SA",
+            "Varejo BR":     "MGLU3.SA, LREN3.SA, ASAI3.SA, SBFG3.SA",
+            "Big Techs US":  "AAPL, MSFT, GOOGL, META, AMZN",
+            "ETFs":          "SPY, QQQ, IWM, EEM",
+            "Custom":        "",
+        }
+        fund_preset = st.selectbox("Grupo pré-definido", list(FUND_PRESETS.keys()))
+        fund_tickers_input = st.text_area(
+            "Tickers (separados por vírgula)",
+            value=FUND_PRESETS[fund_preset],
+            height=80,
+            placeholder="PETR4.SA, VALE3.SA, ITUB4.SA",
+        )
+        fund_btn = st.button("🔍 Carregar Fundamentos", use_container_width=True, type="primary")
 
 
-# ── Helpers: Long/Short ───────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════
+# Helpers
+# ════════════════════════════════════════════════════════════════════
 @st.cache_data(ttl=30)
 def fetch(ticker, period, interval):
     data = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
@@ -157,28 +159,17 @@ Estruture sua resposta em:
                                  messages=[{"role": "user", "content": prompt}]) as stream:
         return stream.get_final_text()
 
-
-# ── Helpers: Fundamentos ──────────────────────────────────────────────────────
 FUND_FIELDS = {
-    "Nome":               "shortName",
-    "Setor":              "sector",
-    "P/L":                "trailingPE",
-    "P/L Fwd":            "forwardPE",
-    "P/VP":               "priceToBook",
-    "EV/EBITDA":          "enterpriseToEbitda",
-    "ROE (%)":            "returnOnEquity",
-    "ROA (%)":            "returnOnAssets",
-    "Marg. Líq. (%)":     "profitMargins",
-    "Marg. EBITDA (%)":   "ebitdaMargins",
-    "Div. Yield (%)":     "dividendYield",
-    "Dív./PL":            "debtToEquity",
-    "Liq. Corrente":      "currentRatio",
-    "Cresc. Receita (%)": "revenueGrowth",
-    "Cresc. Lucro (%)":   "earningsGrowth",
-    "Beta":               "beta",
-    "Market Cap":         "marketCap",
+    "Nome": "shortName", "Setor": "sector",
+    "P/L": "trailingPE", "P/L Fwd": "forwardPE", "P/VP": "priceToBook",
+    "EV/EBITDA": "enterpriseToEbitda",
+    "ROE (%)": "returnOnEquity", "ROA (%)": "returnOnAssets",
+    "Marg. Líq. (%)": "profitMargins", "Marg. EBITDA (%)": "ebitdaMargins",
+    "Div. Yield (%)": "dividendYield", "Dív./PL": "debtToEquity",
+    "Liq. Corrente": "currentRatio",
+    "Cresc. Receita (%)": "revenueGrowth", "Cresc. Lucro (%)": "earningsGrowth",
+    "Beta": "beta", "Market Cap": "marketCap",
 }
-
 PERCENT_FIELDS = {"ROE (%)", "ROA (%)", "Marg. Líq. (%)", "Marg. EBITDA (%)", "Div. Yield (%)", "Cresc. Receita (%)", "Cresc. Lucro (%)"}
 NUMERIC_CHART_FIELDS = ["P/L", "P/L Fwd", "P/VP", "EV/EBITDA", "ROE (%)", "ROA (%)", "Marg. Líq. (%)", "Dív./PL", "Beta"]
 
@@ -215,38 +206,22 @@ def fmt_market_cap(v):
     if v >= 1e6:   return f"${v/1e6:.2f}M"
     return f"${v:,.0f}"
 
-def color_value(val, field):
-    if pd.isna(val) or val is None:
+def _fmt(val, pct=False, mult=False):
+    if val is None or (isinstance(val, float) and np.isnan(val)):
         return "—"
-    v = float(val)
-    if field == "P/L":
-        color = "metric-good" if 5 < v < 20 else "metric-warn" if v <= 5 or v <= 30 else "metric-bad"
-    elif field == "ROE (%)":
-        color = "metric-good" if v >= 15 else "metric-warn" if v >= 8 else "metric-bad"
-    elif field == "Marg. Líq. (%)":
-        color = "metric-good" if v >= 10 else "metric-warn" if v >= 5 else "metric-bad"
-    elif field == "Dív./PL":
-        color = "metric-good" if v < 50 else "metric-warn" if v < 150 else "metric-bad"
-    elif field == "Div. Yield (%)":
-        color = "metric-good" if v >= 4 else "metric-warn" if v >= 2 else "metric-bad"
-    else:
-        return f"{v:.2f}"
-    return f'<span class="{color}">{v:.2f}</span>'
-
-PLOTLY_COLORS = ["#cba6f7", "#a6e3a1", "#f38ba8", "#89dceb", "#fab387", "#f9e2af", "#b4befe", "#94e2d5"]
+    if pct:  return f"{float(val):.2f}%"
+    if mult: return f"{float(val):.2f}x"
+    return f"{float(val):.2f}"
 
 
-# ── Tabs ──────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════
+# MAIN — render only the active panel
+# ════════════════════════════════════════════════════════════════════
 st.title("📊 Long / Short Dashboard")
-st.caption("Ratio em tempo real · Z-Score · Cointegração · Fundamentos · Análise via Claude AI")
 
-tab_ls, tab_fund = st.tabs(["📈 Long / Short", "🏦 Fundamentos"])
+if mode == "📈 Long / Short":
+    st.caption("Ratio em tempo real · Z-Score · Cointegração · Análise via Claude AI")
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TAB 1 — Long / Short
-# ═══════════════════════════════════════════════════════════════════════════════
-with tab_ls:
     if auto_refresh:
         time.sleep(30)
         st.rerun()
@@ -365,15 +340,12 @@ with tab_ls:
     st.caption(f"Dados via Yahoo Finance · Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — Fundamentos
-# ═══════════════════════════════════════════════════════════════════════════════
-with tab_fund:
-    st.subheader("🏦 Análise de Fundamentos")
+else:
+    st.caption("Comparação de fundamentos · Análise individual · Dados via Yahoo Finance")
 
     tickers_raw = [t.strip().upper() for t in fund_tickers_input.replace(";", ",").split(",") if t.strip()]
 
-    if not fund_btn and not tickers_raw:
+    if not fund_btn:
         st.info("Selecione um grupo ou insira tickers na barra lateral e clique em **🔍 Carregar Fundamentos**.")
         st.stop()
 
@@ -388,14 +360,10 @@ with tab_fund:
         st.error("Não foi possível carregar dados. Verifique os tickers.")
         st.stop()
 
-    # Sub-tabs: Comparar | Individual
     sub_compare, sub_individual = st.tabs(["⚖️ Comparar Empresas", "🔍 Empresa Individual"])
 
-    # ── Sub-tab: Comparar ────────────────────────────────────────────────────
     with sub_compare:
         st.markdown("#### Tabela Comparativa")
-
-        # Display table with formatting
         display_df = df_fund.copy()
         for col in display_df.columns:
             if col == "Market Cap":
@@ -404,217 +372,131 @@ with tab_fund:
                 display_df[col] = display_df[col].apply(lambda v: f"{v:.2f}%" if pd.notna(v) else "—")
             elif col not in ("Nome", "Setor"):
                 display_df[col] = display_df[col].apply(lambda v: f"{v:.2f}" if pd.notna(v) else "—")
-
         st.dataframe(display_df, use_container_width=True)
 
         st.divider()
         st.markdown("#### Gráficos Comparativos")
-
-        # Pick which metric to chart
-        available_chart_fields = [f for f in NUMERIC_CHART_FIELDS if f in df_fund.columns]
-        selected_metrics = st.multiselect(
-            "Métricas para comparar",
-            available_chart_fields,
-            default=available_chart_fields[:4],
-            key="compare_metrics",
-        )
+        available = [f for f in NUMERIC_CHART_FIELDS if f in df_fund.columns]
+        selected_metrics = st.multiselect("Métricas para comparar", available, default=available[:4])
 
         if selected_metrics:
             n_cols = min(2, len(selected_metrics))
-            n_rows = -(-len(selected_metrics) // n_cols)  # ceiling div
-            fig_cmp = make_subplots(
-                rows=n_rows, cols=n_cols,
-                subplot_titles=selected_metrics,
-                vertical_spacing=0.12,
-                horizontal_spacing=0.08,
-            )
+            n_rows = -(-len(selected_metrics) // n_cols)
+            fig_cmp = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=selected_metrics,
+                                    vertical_spacing=0.12, horizontal_spacing=0.08)
             for idx, metric in enumerate(selected_metrics):
-                row = idx // n_cols + 1
-                col = idx % n_cols + 1
+                r = idx // n_cols + 1
+                c = idx % n_cols + 1
                 series = df_fund[metric].dropna()
                 if series.empty:
                     continue
-                bar_colors = [PLOTLY_COLORS[i % len(PLOTLY_COLORS)] for i in range(len(series))]
-                fig_cmp.add_trace(
-                    go.Bar(
-                        x=series.index.tolist(),
-                        y=series.values.tolist(),
-                        marker_color=bar_colors,
-                        showlegend=False,
-                        text=[f"{v:.2f}" for v in series.values],
-                        textposition="outside",
-                    ),
-                    row=row, col=col,
-                )
-
-            fig_cmp.update_layout(
-                height=300 * n_rows,
-                paper_bgcolor="#1e1e2e",
-                plot_bgcolor="#1e1e2e",
-                font=dict(color="#cdd6f4"),
-                margin=dict(l=0, r=0, t=40, b=0),
-            )
+                colors = [PLOTLY_COLORS[i % len(PLOTLY_COLORS)] for i in range(len(series))]
+                fig_cmp.add_trace(go.Bar(x=series.index.tolist(), y=series.values.tolist(),
+                    marker_color=colors, showlegend=False,
+                    text=[f"{v:.2f}" for v in series.values], textposition="outside"), row=r, col=c)
+            fig_cmp.update_layout(height=300 * n_rows, paper_bgcolor="#1e1e2e", plot_bgcolor="#1e1e2e",
+                font=dict(color="#cdd6f4"), margin=dict(l=0, r=0, t=40, b=0))
             fig_cmp.update_xaxes(gridcolor="#313244")
             fig_cmp.update_yaxes(gridcolor="#313244")
             st.plotly_chart(fig_cmp, use_container_width=True)
 
-        # Radar chart for multi-metric comparison
         st.divider()
         st.markdown("#### Radar — Perfil Comparativo")
         radar_metrics = [f for f in ["P/L", "ROE (%)", "Marg. Líq. (%)", "EV/EBITDA", "Div. Yield (%)", "Beta"]
                          if f in df_fund.columns]
-
         if radar_metrics and len(df_fund) >= 2:
-            # Normalize each metric 0-1 across companies (min-max)
             radar_df = df_fund[radar_metrics].copy().astype(float)
             for col in radar_df.columns:
                 mn, mx = radar_df[col].min(), radar_df[col].max()
-                if mx != mn:
-                    radar_df[col] = (radar_df[col] - mn) / (mx - mn)
-                else:
-                    radar_df[col] = 0.5
-
+                radar_df[col] = (radar_df[col] - mn) / (mx - mn) if mx != mn else 0.5
             fig_radar = go.Figure()
             for i, ticker in enumerate(radar_df.index):
                 vals = radar_df.loc[ticker].tolist()
-                vals += [vals[0]]  # close polygon
-                fig_radar.add_trace(go.Scatterpolar(
-                    r=vals,
-                    theta=radar_metrics + [radar_metrics[0]],
-                    fill="toself",
-                    name=ticker,
-                    line=dict(color=PLOTLY_COLORS[i % len(PLOTLY_COLORS)]),
-                    opacity=0.6,
-                ))
+                vals += [vals[0]]
+                fig_radar.add_trace(go.Scatterpolar(r=vals, theta=radar_metrics + [radar_metrics[0]],
+                    fill="toself", name=ticker, line=dict(color=PLOTLY_COLORS[i % len(PLOTLY_COLORS)]), opacity=0.6))
             fig_radar.update_layout(
-                polar=dict(
-                    bgcolor="#313244",
-                    radialaxis=dict(visible=True, gridcolor="#45475a", color="#cdd6f4"),
-                    angularaxis=dict(gridcolor="#45475a", color="#cdd6f4"),
-                ),
-                paper_bgcolor="#1e1e2e",
-                font=dict(color="#cdd6f4"),
-                legend=dict(bgcolor="#313244"),
-                height=450,
-                margin=dict(l=40, r=40, t=40, b=40),
-            )
+                polar=dict(bgcolor="#313244",
+                           radialaxis=dict(visible=True, gridcolor="#45475a", color="#cdd6f4"),
+                           angularaxis=dict(gridcolor="#45475a", color="#cdd6f4")),
+                paper_bgcolor="#1e1e2e", font=dict(color="#cdd6f4"),
+                legend=dict(bgcolor="#313244"), height=450,
+                margin=dict(l=40, r=40, t=40, b=40))
             st.plotly_chart(fig_radar, use_container_width=True)
-            st.caption("Radar normalizado (0 = pior, 1 = melhor no grupo) — apenas para comparação relativa entre os ativos selecionados.")
+            st.caption("Radar normalizado (0 = pior, 1 = melhor no grupo).")
         else:
-            st.info("Selecione ao menos 2 empresas para o gráfico de radar.")
+            st.info("Selecione ao menos 2 empresas para o radar.")
 
-    # ── Sub-tab: Individual ──────────────────────────────────────────────────
     with sub_individual:
         valid_tickers = [t for t in tickers_raw if t in df_fund.index]
         if not valid_tickers:
             st.warning("Nenhum ticker com dados disponíveis.")
-            st.stop()
-
-        selected_ticker = st.selectbox("Selecione a empresa", valid_tickers, key="ind_ticker")
-        row_data = df_fund.loc[selected_ticker]
-
-        company_name = row_data.get("Nome") or selected_ticker
-        sector       = row_data.get("Setor") or "—"
-
-        st.markdown(f"### {company_name}")
-        st.caption(f"**Ticker:** {selected_ticker} &nbsp;|&nbsp; **Setor:** {sector}")
-        st.divider()
-
-        # Valuation metrics
-        st.markdown("**📐 Valuation**")
-        v1, v2, v3, v4 = st.columns(4)
-        def _fmt(val, pct=False, mult=False):
-            if val is None or (isinstance(val, float) and np.isnan(val)):
-                return "—"
-            if pct:
-                return f"{float(val):.2f}%"
-            if mult:
-                return f"{float(val):.2f}x"
-            return f"{float(val):.2f}"
-
-        v1.metric("P/L",        _fmt(row_data.get("P/L"),        mult=True))
-        v2.metric("P/L Fwd",    _fmt(row_data.get("P/L Fwd"),    mult=True))
-        v3.metric("P/VP",       _fmt(row_data.get("P/VP"),        mult=True))
-        v4.metric("EV/EBITDA",  _fmt(row_data.get("EV/EBITDA"),   mult=True))
-
-        # Profitability
-        st.markdown("**💰 Rentabilidade**")
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric("ROE",            _fmt(row_data.get("ROE (%)"),        pct=True))
-        p2.metric("ROA",            _fmt(row_data.get("ROA (%)"),        pct=True))
-        p3.metric("Margem Líquida", _fmt(row_data.get("Marg. Líq. (%)"),  pct=True))
-        p4.metric("Margem EBITDA",  _fmt(row_data.get("Marg. EBITDA (%)"), pct=True))
-
-        # Financial health
-        st.markdown("**🏗️ Saúde Financeira**")
-        h1, h2, h3, h4 = st.columns(4)
-        h1.metric("Dívida/PL",      _fmt(row_data.get("Dív./PL")))
-        h2.metric("Liq. Corrente",  _fmt(row_data.get("Liq. Corrente")))
-        h3.metric("Div. Yield",     _fmt(row_data.get("Div. Yield (%)"), pct=True))
-        h4.metric("Beta",           _fmt(row_data.get("Beta")))
-
-        # Growth & size
-        st.markdown("**📈 Crescimento & Tamanho**")
-        g1, g2, g3 = st.columns(3)
-        g1.metric("Cresc. Receita", _fmt(row_data.get("Cresc. Receita (%)"), pct=True))
-        g2.metric("Cresc. Lucro",   _fmt(row_data.get("Cresc. Lucro (%)"),   pct=True))
-        g3.metric("Market Cap",     fmt_market_cap(row_data.get("Market Cap")))
-
-        st.divider()
-
-        # Horizontal bar chart for all numeric metrics
-        st.markdown("**📊 Visão Geral dos Indicadores**")
-        chart_fields = [f for f in NUMERIC_CHART_FIELDS if f in df_fund.columns]
-        ind_vals = {f: row_data.get(f) for f in chart_fields}
-        ind_vals = {k: v for k, v in ind_vals.items() if v is not None and not (isinstance(v, float) and np.isnan(v))}
-
-        if ind_vals:
-            fig_ind = go.Figure(go.Bar(
-                x=list(ind_vals.values()),
-                y=list(ind_vals.keys()),
-                orientation="h",
-                marker_color="#cba6f7",
-                text=[f"{v:.2f}" for v in ind_vals.values()],
-                textposition="outside",
-            ))
-            fig_ind.update_layout(
-                height=max(300, len(ind_vals) * 45),
-                paper_bgcolor="#1e1e2e",
-                plot_bgcolor="#1e1e2e",
-                font=dict(color="#cdd6f4"),
-                margin=dict(l=0, r=60, t=20, b=0),
-                xaxis=dict(gridcolor="#313244"),
-                yaxis=dict(gridcolor="#313244"),
-            )
-            st.plotly_chart(fig_ind, use_container_width=True)
-
-        # Historical price chart
-        st.divider()
-        st.markdown("**📉 Histórico de Preços (1 ano)**")
-        with st.spinner("Carregando histórico de preços…"):
-            hist_data = fetch(selected_ticker, "1y", "1d")
-        if not hist_data.empty:
-            fig_price = go.Figure()
-            fig_price.add_trace(go.Scatter(
-                x=hist_data.index, y=hist_data.values,
-                name=selected_ticker,
-                line=dict(color="#cba6f7", width=2),
-                fill="tozeroy",
-                fillcolor="rgba(203,166,247,0.1)",
-            ))
-            fig_price.update_layout(
-                height=300,
-                paper_bgcolor="#1e1e2e",
-                plot_bgcolor="#1e1e2e",
-                font=dict(color="#cdd6f4"),
-                margin=dict(l=0, r=0, t=20, b=0),
-                xaxis=dict(gridcolor="#313244"),
-                yaxis=dict(gridcolor="#313244"),
-                showlegend=False,
-            )
-            st.plotly_chart(fig_price, use_container_width=True)
         else:
-            st.info("Histórico de preços não disponível.")
+            selected_ticker = st.selectbox("Selecione a empresa", valid_tickers)
+            row_data = df_fund.loc[selected_ticker]
+            company_name = row_data.get("Nome") or selected_ticker
+            sector = row_data.get("Setor") or "—"
+
+            st.markdown(f"### {company_name}")
+            st.caption(f"**Ticker:** {selected_ticker} &nbsp;|&nbsp; **Setor:** {sector}")
+            st.divider()
+
+            st.markdown("**📐 Valuation**")
+            v1, v2, v3, v4 = st.columns(4)
+            v1.metric("P/L",       _fmt(row_data.get("P/L"),       mult=True))
+            v2.metric("P/L Fwd",   _fmt(row_data.get("P/L Fwd"),   mult=True))
+            v3.metric("P/VP",      _fmt(row_data.get("P/VP"),      mult=True))
+            v4.metric("EV/EBITDA", _fmt(row_data.get("EV/EBITDA"), mult=True))
+
+            st.markdown("**💰 Rentabilidade**")
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("ROE",            _fmt(row_data.get("ROE (%)"),         pct=True))
+            p2.metric("ROA",            _fmt(row_data.get("ROA (%)"),         pct=True))
+            p3.metric("Margem Líquida", _fmt(row_data.get("Marg. Líq. (%)"),  pct=True))
+            p4.metric("Margem EBITDA",  _fmt(row_data.get("Marg. EBITDA (%)"),pct=True))
+
+            st.markdown("**🏗️ Saúde Financeira**")
+            h1, h2, h3, h4 = st.columns(4)
+            h1.metric("Dívida/PL",     _fmt(row_data.get("Dív./PL")))
+            h2.metric("Liq. Corrente", _fmt(row_data.get("Liq. Corrente")))
+            h3.metric("Div. Yield",    _fmt(row_data.get("Div. Yield (%)"), pct=True))
+            h4.metric("Beta",          _fmt(row_data.get("Beta")))
+
+            st.markdown("**📈 Crescimento & Tamanho**")
+            g1, g2, g3 = st.columns(3)
+            g1.metric("Cresc. Receita", _fmt(row_data.get("Cresc. Receita (%)"), pct=True))
+            g2.metric("Cresc. Lucro",   _fmt(row_data.get("Cresc. Lucro (%)"),   pct=True))
+            g3.metric("Market Cap",     fmt_market_cap(row_data.get("Market Cap")))
+
+            st.divider()
+            st.markdown("**📊 Visão Geral dos Indicadores**")
+            chart_fields = [f for f in NUMERIC_CHART_FIELDS if f in df_fund.columns]
+            ind_vals = {f: row_data.get(f) for f in chart_fields}
+            ind_vals = {k: v for k, v in ind_vals.items() if v is not None and not (isinstance(v, float) and np.isnan(v))}
+            if ind_vals:
+                fig_ind = go.Figure(go.Bar(x=list(ind_vals.values()), y=list(ind_vals.keys()),
+                    orientation="h", marker_color="#cba6f7",
+                    text=[f"{v:.2f}" for v in ind_vals.values()], textposition="outside"))
+                fig_ind.update_layout(height=max(300, len(ind_vals) * 45),
+                    paper_bgcolor="#1e1e2e", plot_bgcolor="#1e1e2e",
+                    font=dict(color="#cdd6f4"), margin=dict(l=0, r=60, t=20, b=0),
+                    xaxis=dict(gridcolor="#313244"), yaxis=dict(gridcolor="#313244"))
+                st.plotly_chart(fig_ind, use_container_width=True)
+
+            st.divider()
+            st.markdown("**📉 Histórico de Preços (1 ano)**")
+            with st.spinner("Carregando histórico…"):
+                hist_data = fetch(selected_ticker, "1y", "1d")
+            if not hist_data.empty:
+                fig_price = go.Figure(go.Scatter(x=hist_data.index, y=hist_data.values,
+                    name=selected_ticker, line=dict(color="#cba6f7", width=2),
+                    fill="tozeroy", fillcolor="rgba(203,166,247,0.1)"))
+                fig_price.update_layout(height=300, paper_bgcolor="#1e1e2e", plot_bgcolor="#1e1e2e",
+                    font=dict(color="#cdd6f4"), margin=dict(l=0, r=0, t=20, b=0),
+                    xaxis=dict(gridcolor="#313244"), yaxis=dict(gridcolor="#313244"), showlegend=False)
+                st.plotly_chart(fig_price, use_container_width=True)
+            else:
+                st.info("Histórico de preços não disponível.")
 
     st.divider()
-    st.caption(f"Dados via Yahoo Finance · Fundamentos podem ter defasagem · Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+    st.caption(f"Dados via Yahoo Finance · Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
