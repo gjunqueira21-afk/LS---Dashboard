@@ -234,7 +234,18 @@ if mode == "📈 Long / Short":
         time.sleep(30)
         st.rerun()
 
-    if not (run_btn or auto_refresh):
+    if run_btn:
+        st.session_state["ls_ran"] = True
+        st.session_state["ls_long"] = long_ticker
+        st.session_state["ls_short"] = short_ticker
+
+    already_ran = (
+        st.session_state.get("ls_ran")
+        and st.session_state.get("ls_long") == long_ticker
+        and st.session_state.get("ls_short") == short_ticker
+    )
+
+    if not (run_btn or auto_refresh or already_ran):
         st.info("Configure os ativos na barra lateral e clique em **▶ Analisar**.")
         st.stop()
 
