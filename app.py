@@ -234,18 +234,7 @@ if mode == "📈 Long / Short":
         time.sleep(30)
         st.rerun()
 
-    if run_btn:
-        st.session_state["ls_ran"] = True
-        st.session_state["ls_long"] = long_ticker
-        st.session_state["ls_short"] = short_ticker
-
-    already_ran = (
-        st.session_state.get("ls_ran")
-        and st.session_state.get("ls_long") == long_ticker
-        and st.session_state.get("ls_short") == short_ticker
-    )
-
-    if not (run_btn or auto_refresh or already_ran):
+    if not (run_btn or auto_refresh):
         st.info("Configure os ativos na barra lateral e clique em **▶ Analisar**.")
         st.stop()
 
@@ -345,19 +334,15 @@ if mode == "📈 Long / Short":
     if not api_key:
         st.warning("Insira sua Anthropic API Key na barra lateral para ativar a análise via Claude.")
     else:
-        analysis_key = f"claude_analysis_{long_ticker}_{short_ticker}"
         if st.button("🧠 Gerar análise com Claude", type="secondary"):
             with st.spinner("Claude analisando o par…"):
                 try:
-                    result = analyze_with_claude(api_key, long_ticker, short_ticker,
-                                                 ratio_series, z_series, coint_p, adf_p, hedge, corr_now)
-                    st.session_state[analysis_key] = result
+                    st.markdown(analyze_with_claude(api_key, long_ticker, short_ticker,
+                                                    ratio_series, z_series, coint_p, adf_p, hedge, corr_now))
                 except anthropic.AuthenticationError:
                     st.error("API Key inválida.")
                 except Exception as e:
                     st.error(f"Erro: {e}")
-        if analysis_key in st.session_state:
-            st.markdown(st.session_state[analysis_key])
 
     st.divider()
     with st.expander("ℹ️ Manual de Métricas — Long/Short"):
@@ -521,12 +506,16 @@ else:
         median_val = radar_df[col].median()
         radar_df[col] = radar_df[col].fillna(median_val if not np.isnan(median_val) else 0)
 
-    # Normaliza 0-100 via percentile rank (robusto a outliers)
+    # Normaliza 0-100 por coluna
     for col in RADAR_METRICS:
-        radar_df[col] = radar_df[col].rank(pct=True) * 100
+        mn, mx = radar_df[col].min(), radar_df[col].max()
+        if mx != mn:
+            radar_df[col] = (radar_df[col] - mn) / (mx - mn) * 100
+        else:
+            radar_df[col] = 50.0
 
     st.subheader("🕸️ Radar — Qualidade (normalizado)")
-    st.caption("Valores normalizados entre 0–100 dentro do grupo. NaN substituído pela mediana.")
+    st.caption("Valores normalizados entre 0–100 dentro do grupo. Dados ausentes substituídos pela mediana.")
     fig_radar = go.Figure()
     RADAR_COLORS = ["#cba6f7", "#a6e3a1", "#f38ba8", "#fab387", "#89dceb", "#f9e2af"]
     for idx, row_ in radar_df.iterrows():
