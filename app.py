@@ -499,37 +499,46 @@ else:
 
     RADAR_METRICS = ["ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)", "Div. Yield (%)"]
     radar_df = df[["Ticker"] + RADAR_METRICS].copy()
+
+    # Converte para numérico e substitui NaN pela mediana da coluna (evita empresas sumindo no centro)
     for col in RADAR_METRICS:
-        mn = radar_df[col].min()
-        mx = radar_df[col].max()
+        radar_df[col] = pd.to_numeric(radar_df[col], errors="coerce")
+        median_val = radar_df[col].median()
+        radar_df[col] = radar_df[col].fillna(median_val if not np.isnan(median_val) else 0)
+
+    # Normaliza 0-100 por coluna
+    for col in RADAR_METRICS:
+        mn, mx = radar_df[col].min(), radar_df[col].max()
         if mx != mn:
             radar_df[col] = (radar_df[col] - mn) / (mx - mn) * 100
         else:
             radar_df[col] = 50.0
 
     st.subheader("🕸️ Radar — Qualidade (normalizado)")
+    st.caption("Valores normalizados entre 0–100 dentro do grupo. Dados ausentes substituídos pela mediana.")
     fig_radar = go.Figure()
     RADAR_COLORS = ["#cba6f7", "#a6e3a1", "#f38ba8", "#fab387", "#89dceb", "#f9e2af"]
     for idx, row_ in radar_df.iterrows():
-        vals = [row_[m] for m in RADAR_METRICS]
+        vals = [round(float(row_[m]), 1) for m in RADAR_METRICS]
         fig_radar.add_trace(go.Scatterpolar(
             r=vals + [vals[0]],
             theta=RADAR_METRICS + [RADAR_METRICS[0]],
             fill="toself",
             name=row_["Ticker"],
-            line=dict(color=RADAR_COLORS[idx % len(RADAR_COLORS)]),
-            opacity=0.6,
+            line=dict(color=RADAR_COLORS[idx % len(RADAR_COLORS)], width=2),
+            opacity=0.55,
         ))
     fig_radar.update_layout(
         polar=dict(
             bgcolor="#313244",
-            radialaxis=dict(visible=True, range=[0, 100], color="#cdd6f4"),
-            angularaxis=dict(color="#cdd6f4"),
+            radialaxis=dict(visible=True, range=[0, 100], color="#cdd6f4", tickfont=dict(size=10)),
+            angularaxis=dict(color="#cdd6f4", tickfont=dict(size=11)),
         ),
         paper_bgcolor="#1e1e2e",
         font=dict(color="#cdd6f4"),
-        height=450,
-        margin=dict(l=40, r=40, t=20, b=20),
+        legend=dict(bgcolor="#313244", font=dict(size=12)),
+        height=500,
+        margin=dict(l=60, r=60, t=30, b=30),
     )
     st.plotly_chart(fig_radar, use_container_width=True)
 
