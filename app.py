@@ -334,15 +334,19 @@ if mode == "📈 Long / Short":
     if not api_key:
         st.warning("Insira sua Anthropic API Key na barra lateral para ativar a análise via Claude.")
     else:
+        analysis_key = f"claude_analysis_{long_ticker}_{short_ticker}"
         if st.button("🧠 Gerar análise com Claude", type="secondary"):
             with st.spinner("Claude analisando o par…"):
                 try:
-                    st.markdown(analyze_with_claude(api_key, long_ticker, short_ticker,
-                                                    ratio_series, z_series, coint_p, adf_p, hedge, corr_now))
+                    result = analyze_with_claude(api_key, long_ticker, short_ticker,
+                                                 ratio_series, z_series, coint_p, adf_p, hedge, corr_now)
+                    st.session_state[analysis_key] = result
                 except anthropic.AuthenticationError:
                     st.error("API Key inválida.")
                 except Exception as e:
                     st.error(f"Erro: {e}")
+        if analysis_key in st.session_state:
+            st.markdown(st.session_state[analysis_key])
 
     st.divider()
     with st.expander("ℹ️ Manual de Métricas — Long/Short"):
