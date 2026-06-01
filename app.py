@@ -24,7 +24,6 @@ st.markdown("""
 default_api_key   = st.secrets.get("ANTHROPIC_API_KEY", "")
 default_brapi_key = st.secrets.get("BRAPI_TOKEN", "")
 
-# ─── Sidebar ────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("⚙️ Configurações")
     mode = st.radio("Painel", ["📈 Long / Short", "🏦 Fundamentos"], label_visibility="collapsed")
@@ -34,23 +33,11 @@ with st.sidebar:
         api_key = st.text_input("Anthropic API Key", value=default_api_key, type="password", placeholder="sk-ant-...")
         st.divider()
         st.subheader("Ativos")
-        PRESETS_LS = {
-            "PETR4 / VALE3":  ("PETR4.SA", "VALE3.SA"),
-            "ITUB4 / BBDC4":  ("ITUB4.SA", "BBDC4.SA"),
-            "MGLU3 / VIIA3":  ("MGLU3.SA", "VIIA3.SA"),
-            "BTC / ETH":      ("BTC-USD",  "ETH-USD"),
-            "SPY / QQQ":      ("SPY",      "QQQ"),
-            "GLD / SLV":      ("GLD",      "SLV"),
-            "PETR4 / BRKM5":  ("PETR4.SA", "BRKM5.SA"),
-            "Custom":         ("",         ""),
-        }
-        preset = st.selectbox("Par pré-definido", list(PRESETS_LS.keys()))
-        default_long, default_short = PRESETS_LS[preset]
         col1, col2 = st.columns(2)
         with col1:
-            long_ticker  = st.text_input("LONG",  value=default_long).upper().strip()
+            long_ticker  = st.text_input("LONG",  value="PETR4.SA").upper().strip()
         with col2:
-            short_ticker = st.text_input("SHORT", value=default_short).upper().strip()
+            short_ticker = st.text_input("SHORT", value="VALE3.SA").upper().strip()
         st.divider()
         st.subheader("Período")
         period_map   = {"1 mês": "1mo", "3 meses": "3mo", "6 meses": "6mo", "1 ano": "1y", "2 anos": "2y", "5 anos": "5y"}
@@ -66,7 +53,7 @@ with st.sidebar:
         auto_refresh = st.toggle("Auto-refresh (30s)", value=False)
         run_btn      = st.button("▶ Analisar", use_container_width=True, type="primary")
 
-    else:  # Fundamentos
+    else:
         brapi_key = st.text_input("brapi.dev Token", value=default_brapi_key, type="password", placeholder="token (opcional)")
         st.divider()
         st.subheader("Empresas")
@@ -89,7 +76,6 @@ with st.sidebar:
         st.divider()
         st.caption("Dados: brapi.dev (B3 — dados confiáveis)")
 
-# ─── Funções Long/Short ──────────────────────────────────────────────────────
 @st.cache_data(ttl=30)
 def fetch(ticker, period, interval):
     data = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
@@ -159,16 +145,13 @@ Estruture sua resposta em:
                                  messages=[{"role": "user", "content": prompt}]) as stream:
         return stream.get_final_text()
 
-# ─── Funções Fundamentos (brapi.dev) ─────────────────────────────────────────
 @st.cache_data(ttl=300)
 def fetch_brapi(ticker: str, token: str) -> dict:
-    """Busca dados fundamentais de um ticker via brapi.dev"""
     t = ticker.upper().replace(".SA", "").strip()
     url = f"https://brapi.dev/api/quote/{t}"
     params = {"modules": "defaultKeyStatistics,financialData,summaryProfile"}
     headers = {}
     if token:
-        # brapi PRO aceita tanto Bearer header quanto query param — usamos os dois pra garantir
         headers["Authorization"] = f"Bearer {token}"
         params["token"] = token
     try:
@@ -176,13 +159,11 @@ def fetch_brapi(ticker: str, token: str) -> dict:
         data = r.json()
         if "results" in data and data["results"]:
             return data["results"][0]
-        # Devolve erro pro debug
         return {"_error": data.get("message") or data.get("error") or f"HTTP {r.status_code}: {r.text[:200]}"}
     except Exception as e:
         return {"_error": str(e)}
 
 def safe_pct(val, decimals=2):
-    """Formata número como percentual com segurança"""
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return "—"
     return f"{val:.{decimals}f}%"
@@ -191,11 +172,6 @@ def safe_num(val, decimals=2):
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return "—"
     return f"{val:.{decimals}f}"
-
-def safe_fmt(val, prefix="", suffix="", decimals=2):
-    if val is None or (isinstance(val, float) and np.isnan(val)):
-        return "—"
-    return f"{prefix}{val:.{decimals}f}{suffix}"
 
 def fmt_market_cap(val):
     if val is None:
@@ -207,7 +183,6 @@ def fmt_market_cap(val):
     return f"R${m:.0f}M"
 
 def parse_fundamentals(ticker: str, token: str) -> dict:
-    """Extrai e normaliza métricas fundamentais do retorno da brapi"""
     info = fetch_brapi(ticker, token)
     if not info or "_error" in info:
         return {"_error": (info or {}).get("_error", "sem resposta"), "Ticker": ticker}
@@ -215,29 +190,22 @@ def parse_fundamentals(ticker: str, token: str) -> dict:
     ks = info.get("defaultKeyStatistics") or {}
     fd = info.get("financialData") or {}
     sp = info.get("summaryProfile") or {}
-    pr = {}  # módulo price não disponível neste plano brapi
 
-    # brapi retorna dividendYield como decimal (0.08 = 8%) em summaryProfile
-    # e às vezes em defaultKeyStatistics — normalizar:
     div_yield_raw = ks.get("dividendYield") or info.get("dividendYield")
     if div_yield_raw is not None and div_yield_raw > 1:
-        # veio em percentual (ex: 8.5) — manter como está
         div_yield = div_yield_raw
     elif div_yield_raw is not None:
-        # veio como decimal (0.085) — converter
         div_yield = div_yield_raw * 100
     else:
         div_yield = None
 
-    # debtToEquity no brapi vem como ratio puro (ex: 1.43), não percentual
     dte_raw = fd.get("debtToEquity") or ks.get("debtToEquity")
 
-    # Campos que vêm como decimal 0..1 → converter para %
     def to_pct(v):
         if v is None: return None
         return v * 100
 
-    row = {
+    return {
         "Ticker":         ticker.upper().replace(".SA", ""),
         "Nome":           sp.get("longName") or ks.get("longName") or info.get("longName", ticker),
         "Setor":          sp.get("sector") or info.get("sector", "—"),
@@ -257,9 +225,7 @@ def parse_fundamentals(ticker: str, token: str) -> dict:
         "Beta":           ks.get("beta") or info.get("beta"),
         "Market Cap":     ks.get("marketCap") or info.get("marketCap"),
     }
-    return row
 
-# ─── PAINEL: Long / Short ────────────────────────────────────────────────────
 if mode == "📈 Long / Short":
     st.title("📊 Long / Short Dashboard")
     st.caption("Ratio em tempo real · Z-Score · Cointegração · Análise via Claude AI")
@@ -402,7 +368,6 @@ if mode == "📈 Long / Short":
     st.caption(f"Dados via Yahoo Finance · Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
 
-# ─── PAINEL: Fundamentos ─────────────────────────────────────────────────────
 else:
     st.title("🏦 Fundamentos — Comparação de Empresas")
     st.caption("Dados via brapi.dev · Fonte: B3 / CVM")
@@ -430,7 +395,7 @@ else:
     prog.empty()
 
     if errors:
-        st.warning(f"Não foi possível carregar:\n\n- " + "\n- ".join(errors))
+        st.warning("Não foi possível carregar:\n\n- " + "\n- ".join(errors))
 
     if not rows:
         st.error("Nenhum dado encontrado. Verifique os tickers e o token da brapi.dev.")
@@ -438,14 +403,7 @@ else:
 
     df = pd.DataFrame(rows)
 
-    # ── Tabela comparativa ───────────────────────────────────────────────────
     st.subheader("📋 Tabela Comparativa")
-
-    def color_val(val, metric):
-        """Retorna cor para formatação condicional simples"""
-        if val == "—" or val is None:
-            return val
-        return val
 
     DISPLAY_COLS = [
         "Ticker", "Nome", "Setor",
@@ -457,8 +415,6 @@ else:
     ]
 
     df_display = df[DISPLAY_COLS].copy()
-
-    # Formatar colunas numéricas para exibição
     pct_cols  = ["ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)", "Div. Yield (%)", "Cresc. Receita (%)", "Cresc. Lucro (%)"]
     num_cols  = ["P/L", "P/L Fwd", "P/VP", "EV/EBITDA", "Dív./PL", "Liq. Corrente", "Beta"]
 
@@ -478,10 +434,8 @@ else:
     df_display["Market Cap"] = df["Market Cap"].apply(fmt_market_cap)
 
     st.dataframe(df_display, use_container_width=True, hide_index=True)
-
     st.divider()
 
-    # ── Gráficos de barras ───────────────────────────────────────────────────
     st.subheader("📊 Comparação Visual")
 
     CHART_METRICS = {
@@ -512,7 +466,6 @@ else:
                 col_name, _ = CHART_METRICS[metric]
                 vals = df[col_name].tolist()
                 labels = df["Ticker"].tolist()
-                # converter para float ignorando None
                 y = []
                 x = []
                 for label, v in zip(labels, vals):
@@ -544,11 +497,8 @@ else:
 
     st.divider()
 
-    # ── Radar comparativo ────────────────────────────────────────────────────
     RADAR_METRICS = ["ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)", "Div. Yield (%)"]
     radar_df = df[["Ticker"] + RADAR_METRICS].copy()
-
-    # normalizar 0-100 para o radar
     for col in RADAR_METRICS:
         mn = radar_df[col].min()
         mx = radar_df[col].max()
@@ -585,7 +535,6 @@ else:
 
     st.divider()
 
-    # ── Visão individual ─────────────────────────────────────────────────────
     st.subheader("🔍 Visão Individual")
     selected_ticker = st.selectbox("Selecionar empresa", df["Ticker"].tolist())
     row_ind = df[df["Ticker"] == selected_ticker].iloc[0]
@@ -618,33 +567,31 @@ else:
     st.divider()
     with st.expander("ℹ️ Manual de Métricas — Fundamentos"):
         st.markdown("""
-**P/L (Preço/Lucro)** — Quantas vezes o lucro anual está embutido no preço. P/L 10 = a empresa vale 10 anos de lucro. Menor é mais barato, mas pode indicar problemas.
+**P/L (Preço/Lucro)** — Quantas vezes o lucro anual está embutido no preço. Menor é mais barato.
 
-**P/L Fwd** — Mesmo que P/L, mas usando a estimativa de lucro futuro. Útil para empresas em crescimento.
+**P/L Fwd** — Mesmo que P/L, mas usando a estimativa de lucro futuro.
 
-**P/VP (Preço/Valor Patrimonial)** — Quanto o mercado paga pelo patrimônio contábil. P/VP < 1 pode indicar desconto; > 3 pode indicar prêmio alto.
+**P/VP (Preço/Valor Patrimonial)** — Quanto o mercado paga pelo patrimônio contábil. P/VP < 1 pode indicar desconto.
 
-**EV/EBITDA** — Valor da empresa (incluindo dívida) dividido pelo EBITDA. Boa métrica para comparar empresas com diferentes estruturas de capital. Menor = mais barato.
+**EV/EBITDA** — Valor da empresa (incluindo dívida) dividido pelo EBITDA. Menor = mais barato.
 
-**ROE (%)** — Retorno sobre o patrimônio líquido. Mede eficiência em gerar lucro com capital próprio. Acima de 15% é considerado bom.
+**ROE (%)** — Retorno sobre o patrimônio líquido. Acima de 15% é considerado bom.
 
-**ROA (%)** — Retorno sobre ativos totais. Quanto lucro a empresa gera para cada R$1 de ativo. Mais conservador que o ROE.
+**ROA (%)** — Retorno sobre ativos totais. Mais conservador que o ROE.
 
-**Margem Líquida (%)** — % da receita que vira lucro. Margem 10% = a cada R$100 vendidos, R$10 é lucro.
+**Margem Líquida (%)** — % da receita que vira lucro.
 
-**Margem EBITDA (%)** — % da receita que vira EBITDA (lucro operacional antes de impostos, depreciação e amortização).
+**Margem EBITDA (%)** — % da receita que vira lucro operacional.
 
-**Div. Yield (%)** — Dividendos pagos no ano ÷ preço atual. Rendimento de dividendos. Acima de 6% no Brasil é considerado generoso.
+**Div. Yield (%)** — Dividendos pagos no ano ÷ preço atual. Acima de 6% no Brasil é generoso.
 
-**Dívida/PL** — Alavancagem financeira. Acima de 2x indica alta alavancagem; abaixo de 1x é conservador.
+**Dívida/PL** — Alavancagem financeira. Acima de 2x indica alta alavancagem.
 
-**Liquidez Corrente** — Ativo circulante ÷ passivo circulante. Acima de 1.5 indica boa saúde financeira de curto prazo.
+**Liquidez Corrente** — Ativo circulante ÷ passivo circulante. Acima de 1.5 é saudável.
 
-**Cresc. Receita (%)** — Crescimento da receita no último período reportado vs. período anterior.
+**Cresc. Receita / Lucro (%)** — Crescimento período sobre período.
 
-**Cresc. Lucro (%)** — Crescimento do lucro. Número negativo pode ser temporário (efeito não-recorrente) ou estrutural.
-
-**Beta** — Sensibilidade ao mercado. Beta 1.2 = sobe/cai 20% mais que o índice. Beta < 1 = mais defensivo.
+**Beta** — Sensibilidade ao mercado. Beta < 1 = mais defensivo.
         """)
 
     st.caption(f"Dados via brapi.dev · Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
