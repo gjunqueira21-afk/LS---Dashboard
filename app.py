@@ -123,12 +123,12 @@ def signal_class(z, entry):
     if z < -entry:  return "signal-long"
     return "signal-neutral"
 
-def analyze_with_claude(api_key, long_t, short_t, ratio, z, coint_p, adf_p, hedge, corr_last):
+def analyze_with_claude(api_key, long_t, short_t, ratio, z, coint_p, adf_p, hedge, corr_last, window=30):
     client = anthropic.Anthropic(api_key=api_key)
     prompt = f"""Você é um analista quantitativo especialista em estratégias Long/Short.
 Analise o par {long_t} (LONG) x {short_t} (SHORT) com os dados abaixo e responda em português.
 
-- Ratio atual: {ratio.iloc[-1]:.4f} | Média: {ratio.rolling(30).mean().iloc[-1]:.4f}
+- Ratio atual: {ratio.iloc[-1]:.4f} | Média ({window}d): {ratio.rolling(window).mean().iloc[-1]:.4f}
 - Z-Score atual: {z.iloc[-1]:.3f} | Máx: {z.max():.3f} | Mín: {z.min():.3f}
 - Cointegração p-valor: {coint_p:.4f} → {"✅ cointegrado" if coint_p < 0.05 else "❌ não cointegrado"}
 - ADF p-valor: {adf_p:.4f} → {"✅ estacionário" if adf_p < 0.05 else "❌ não estacionário"}
@@ -273,6 +273,9 @@ if mode == "📈 Long / Short":
         adf_p  = adf_test(spread)
     except: adf_p = 1.0
 
+    if z_series.dropna().empty:
+        st.error(f"Janela Z-Score ({z_window}d) maior que o histórico disponível. Reduza a janela ou aumente o período.")
+        st.stop()
     z_now    = float(z_series.dropna().iloc[-1])
     corr_now = float(corr_series.dropna().iloc[-1]) if not corr_series.dropna().empty else 0.0
 
@@ -350,7 +353,7 @@ if mode == "📈 Long / Short":
             with st.spinner("Claude analisando o par…"):
                 try:
                     result = analyze_with_claude(api_key, long_ticker, short_ticker,
-                                                 ratio_series, z_series, coint_p, adf_p, hedge, corr_now)
+                                                 ratio_series, z_series, coint_p, adf_p, hedge, corr_now, z_window)
                     st.session_state[analysis_key] = result
                 except anthropic.AuthenticationError:
                     st.error("API Key inválida.")
@@ -521,16 +524,15 @@ else:
         median_val = radar_df[col].median()
         radar_df[col] = radar_df[col].fillna(median_val if not np.isnan(median_val) else 0)
 
-    # Normaliza 0-100 por coluna
+    # Normaliza 0-100 via percentile rank (robusto a outliers — evita formas distorcidas)
     for col in RADAR_METRICS:
-        mn, mx = radar_df[col].min(), radar_df[col].max()
-        if mx != mn:
-            radar_df[col] = (radar_df[col] - mn) / (mx - mn) * 100
+        if radar_df[col].nunique() > 1:
+            radar_df[col] = radar_df[col].rank(pct=True) * 100
         else:
             radar_df[col] = 50.0
 
-    st.subheader("🕸️ Radar — Qualidade (normalizado)")
-    st.caption("Valores normalizados entre 0–100 dentro do grupo. Dados ausentes substituídos pela mediana.")
+    st.subheader("🕸️ Radar — Qualidade (ranking relativo)")
+    st.caption("Posição relativa de cada empresa dentro do grupo (0 = pior, 100 = melhor). Dados ausentes preenchidos pela mediana.")
     fig_radar = go.Figure()
     RADAR_COLORS = ["#cba6f7", "#a6e3a1", "#f38ba8", "#fab387", "#89dceb", "#f9e2af"]
     for idx, row_ in radar_df.iterrows():
