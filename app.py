@@ -40,16 +40,40 @@ with st.sidebar:
             short_ticker = st.text_input("SHORT", value="VALE3.SA").upper().strip()
         st.divider()
         st.subheader("Período")
-        period_map   = {"1 mês": "1mo", "3 meses": "3mo", "6 meses": "6mo", "1 ano": "1y", "2 anos": "2y", "5 anos": "5y"}
+        # 252 pregões de correlação exigem histórico longo → default 2 anos
+        period_map   = {"6 meses": "6mo", "1 ano": "1y", "2 anos": "2y", "3 anos": "3y", "5 anos": "5y"}
         period_label = st.selectbox("Histórico", list(period_map.keys()), index=2)
         period       = period_map[period_label]
-        interval_map   = {"Diário": "1d", "Semanal": "1wk", "Horário": "1h"}
-        interval_label = st.selectbox("Intervalo", list(interval_map.keys()))
-        interval       = interval_map[interval_label]
+        interval     = "1d"  # estratégia definida em pregões (diário)
+
         st.divider()
-        z_window     = st.slider("Janela Z-Score (dias)", 10, 120, 30)
-        z_entry      = st.slider("Entrada (|Z| >)", 0.5, 3.0, 2.0, 0.1)
-        z_exit       = st.slider("Saída  (|Z| <)", 0.0, 1.5, 0.5, 0.1)
+        st.subheader("Ratio")
+        use_log = st.checkbox("Usar log ratio  ln(LONG/SHORT)", value=True)
+
+        st.divider()
+        st.subheader("Janelas (pregões)")
+        mean_win = st.number_input("Média do ratio (z-score)",    5, 504, 63)
+        vol_win  = st.number_input("Bandas / volatilidade (z-score)", 5, 504, 63)
+        corr_win = st.number_input("Correlação",                 20, 504, 252)
+        st.caption("O Z-Score usa a média e a volatilidade acima.")
+
+        st.divider()
+        st.subheader("🟡 Monitorar")
+        z_monitor  = st.slider("|Z-Score| ≥",  0.5, 3.0, 1.10, 0.05)
+        dz_monitor = st.slider("Δz (1 pregão) ≥", 0.0, 0.5, 0.05, 0.01)
+        corr_min   = st.slider("Correlação ≥", 0.0, 1.0, 0.75, 0.05)
+
+        st.divider()
+        st.subheader("🔴 Alerta Máximo")
+        z_alert  = st.slider("|Z-Score| ≥ ", 0.5, 3.0, 1.50, 0.05)
+        dz_alert = st.slider("Δz (1 pregão) ≥ ", 0.0, 0.5, 0.15, 0.01)
+
+        st.divider()
+        st.subheader("Saída / Convergência")
+        z_exit   = st.slider("Convergência |Z| ≤", 0.0, 1.0, 0.40, 0.05)
+        max_hold = st.number_input("Máx. holding (pregões)", 5, 252, 63)
+
+        st.divider()
         auto_refresh = st.toggle("Auto-refresh (30s)", value=False)
         run_btn      = st.button("▶ Analisar", use_container_width=True, type="primary")
 
@@ -87,13 +111,16 @@ def fetch(ticker, period, interval):
     close.name = ticker
     return close.dropna()
 
-def compute_ratio(long, short):
+def compute_ratio(long, short, use_log=True):
     df = pd.concat([long, short], axis=1).dropna()
-    return df.iloc[:, 0] / df.iloc[:, 1]
+    r = df.iloc[:, 0] / df.iloc[:, 1]
+    if use_log:
+        r = np.log(r)
+    return r
 
-def zscore(series, window):
-    m = series.rolling(window).mean()
-    s = series.rolling(window).std()
+def zscore(series, mean_win, vol_win):
+    m = series.rolling(mean_win).mean()
+    s = series.rolling(vol_win).std()
     return (series - m) / s
 
 def hedge_ratio(long, short):
@@ -112,34 +139,55 @@ def rolling_corr(long, short, window):
     df = pd.concat([long, short], axis=1).dropna()
     return df.iloc[:, 0].rolling(window).corr(df.iloc[:, 1])
 
-def signal_label(z, entry, exit_):
-    if z > entry:       return "SHORT ratio → comprar SHORT / vender LONG"
-    if z < -entry:      return "LONG ratio → comprar LONG / vender SHORT"
-    if abs(z) < exit_:  return "FECHAR posição (convergência)"
-    return "NEUTRO / aguardar"
+def classify_signal(z, dz, corr, cfg, zero_cross=False):
+    """Classifica em 3 níveis: Alerta Máximo, Monitorar, Convergência ou Neutro.
+    Retorna (rótulo, classe_css, descrição)."""
+    az, adz = abs(z), abs(dz)
+    side = "SHORT ratio → vender LONG / comprar SHORT" if z > 0 else "LONG ratio → comprar LONG / vender SHORT"
+    cls  = "signal-short" if z > 0 else "signal-long"
 
-def signal_class(z, entry):
-    if z > entry:   return "signal-short"
-    if z < -entry:  return "signal-long"
-    return "signal-neutral"
+    # Convergência / saída tem prioridade
+    if az <= cfg["z_exit"] or zero_cross:
+        motivo = "cruzou o zero" if zero_cross and az > cfg["z_exit"] else f"|z| ≤ {cfg['z_exit']:.2f}"
+        return "CONVERGÊNCIA → encerrar / realizar", "signal-neutral", f"Zona de saída ({motivo})"
 
-def analyze_with_claude(api_key, long_t, short_t, ratio, z, coint_p, adf_p, hedge, corr_last, window=30):
+    if az >= cfg["z_alert"] and adz >= cfg["dz_alert"] and corr >= cfg["corr_min"]:
+        return f"🔴 ALERTA MÁXIMO · {side}", cls, \
+               f"|z| ≥ {cfg['z_alert']:.2f} · Δz ≥ {cfg['dz_alert']:.2f} · corr ≥ {cfg['corr_min']:.2f}"
+
+    if az >= cfg["z_monitor"] and adz >= cfg["dz_monitor"] and corr >= cfg["corr_min"]:
+        return f"🟡 MONITORAR · {side}", cls, \
+               f"|z| ≥ {cfg['z_monitor']:.2f} · Δz ≥ {cfg['dz_monitor']:.2f} · corr ≥ {cfg['corr_min']:.2f}"
+
+    return "⚪ NEUTRO · aguardar", "signal-neutral", "Fora dos gatilhos de entrada"
+
+def analyze_with_claude(api_key, long_t, short_t, ratio, z, coint_p, adf_p, hedge, corr_last,
+                        mean_win=63, dz=0.0, cfg=None, use_log=True, sinal="—"):
     client = anthropic.Anthropic(api_key=api_key)
-    prompt = f"""Você é um analista quantitativo especialista em estratégias Long/Short.
+    cfg = cfg or {}
+    ratio_lbl = "log-ratio ln(L/S)" if use_log else "ratio L/S"
+    prompt = f"""Você é um analista quantitativo especialista em estratégias Long/Short (pairs trading) na B3.
 Analise o par {long_t} (LONG) x {short_t} (SHORT) com os dados abaixo e responda em português.
 
-- Ratio atual: {ratio.iloc[-1]:.4f} | Média ({window}d): {ratio.rolling(window).mean().iloc[-1]:.4f}
-- Z-Score atual: {z.iloc[-1]:.3f} | Máx: {z.max():.3f} | Mín: {z.min():.3f}
+Setup (parâmetros da estratégia):
+- {ratio_lbl}, janelas em pregões: média={mean_win}, z-score e volatilidade conforme configurado.
+- Monitorar: |z| ≥ {cfg.get('z_monitor', 1.10):.2f}, Δz ≥ {cfg.get('dz_monitor', 0.05):.2f}, corr ≥ {cfg.get('corr_min', 0.75):.2f}
+- Alerta Máximo: |z| ≥ {cfg.get('z_alert', 1.50):.2f}, Δz ≥ {cfg.get('dz_alert', 0.15):.2f}
+- Saída/convergência: |z| ≤ {cfg.get('z_exit', 0.40):.2f} ou cruzamento do zero; holding máx {cfg.get('max_hold', 63)} pregões.
+
+Situação atual:
+- {ratio_lbl} atual: {ratio.iloc[-1]:.4f} | Média ({mean_win}p): {ratio.rolling(mean_win).mean().iloc[-1]:.4f}
+- Z-Score atual: {z.iloc[-1]:.3f} | Δz (1 pregão): {dz:+.3f} | Máx: {z.max():.3f} | Mín: {z.min():.3f}
 - Cointegração p-valor: {coint_p:.4f} → {"✅ cointegrado" if coint_p < 0.05 else "❌ não cointegrado"}
-- ADF p-valor: {adf_p:.4f} → {"✅ estacionário" if adf_p < 0.05 else "❌ não estacionário"}
-- Hedge ratio (β): {hedge:.4f}
-- Correlação rolling atual: {corr_last:.3f}
+- ADF spread p-valor: {adf_p:.4f} → {"✅ estacionário" if adf_p < 0.05 else "❌ não estacionário"}
+- Hedge ratio (β): {hedge:.4f} | Correlação ({cfg.get('corr_win', 252)}p): {corr_last:.3f}
+- Sinal atual do sistema: {sinal}
 
 Estruture sua resposta em:
-1. Interpretação do Z-Score
-2. Qualidade estatística do par
-3. Sinal operacional (entrada/saída/aguardar)
-4. Riscos e alertas
+1. Leitura do Z-Score e do Δz (o par está esticando ou revertendo?)
+2. Qualidade estatística (cointegração, correlação, estacionaridade)
+3. Sinal operacional — coerente com Monitorar / Alerta Máximo / Convergência acima?
+4. Riscos e checklist (liquidez, spread, aluguel, custo)
 5. Resumo executivo (2-3 linhas)"""
     with client.messages.stream(model="claude-sonnet-4-6", max_tokens=1200,
                                  messages=[{"role": "user", "content": prompt}]) as stream:
@@ -261,9 +309,15 @@ if mode == "📈 Long / Short":
         st.error("Não foi possível baixar dados. Verifique os tickers.")
         st.stop()
 
-    ratio_series = compute_ratio(long_data, short_data)
-    z_series     = zscore(ratio_series, z_window)
-    corr_series  = rolling_corr(long_data, short_data, z_window)
+    cfg = {
+        "z_monitor": z_monitor, "dz_monitor": dz_monitor, "corr_min": corr_min,
+        "z_alert": z_alert, "dz_alert": dz_alert,
+        "z_exit": z_exit, "max_hold": max_hold, "corr_win": corr_win,
+    }
+
+    ratio_series = compute_ratio(long_data, short_data, use_log)
+    z_series     = zscore(ratio_series, mean_win, vol_win)
+    corr_series  = rolling_corr(long_data, short_data, corr_win)
     hedge        = hedge_ratio(long_data, short_data)
 
     try:    coint_p = cointegration_test(long_data, short_data)
@@ -273,29 +327,46 @@ if mode == "📈 Long / Short":
         adf_p  = adf_test(spread)
     except: adf_p = 1.0
 
-    if z_series.dropna().empty:
-        st.error(f"Janela Z-Score ({z_window}d) maior que o histórico disponível. Reduza a janela ou aumente o período.")
+    z_clean = z_series.dropna()
+    if z_clean.empty:
+        st.error(f"Janelas maiores que o histórico disponível. Reduza as janelas ou aumente o período.")
         st.stop()
-    z_now    = float(z_series.dropna().iloc[-1])
+    z_now    = float(z_clean.iloc[-1])
+    z_prev   = float(z_clean.iloc[-2]) if len(z_clean) > 1 else z_now
+    dz_now   = z_now - z_prev
+    zero_cross = (z_now == 0) or (z_prev != 0 and np.sign(z_now) != np.sign(z_prev))
     corr_now = float(corr_series.dropna().iloc[-1]) if not corr_series.dropna().empty else 0.0
 
+    ratio_lbl = "Log-Ratio" if use_log else "Ratio"
     st.subheader(f"{long_ticker}  ×  {short_ticker}")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Ratio",          f"{ratio_series.iloc[-1]:.4f}")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric(ratio_lbl,        f"{ratio_series.iloc[-1]:.4f}")
     c2.metric("Z-Score",        f"{z_now:.3f}")
-    c3.metric("Correlação",     f"{corr_now:.3f}")
-    c4.metric("Cointegração p", f"{coint_p:.4f}", delta="✅ OK" if coint_p < 0.05 else "❌ Fraco")
-    c5.metric("ADF spread p",   f"{adf_p:.4f}",   delta="✅ OK" if adf_p < 0.05 else "❌ Fraco")
+    c3.metric("Δz (1 pregão)",  f"{dz_now:+.3f}")
+    c4.metric(f"Correlação {corr_win}p", f"{corr_now:.3f}", delta="OK" if corr_now >= corr_min else "Baixa")
+    c5.metric("Cointegração p", f"{coint_p:.4f}", delta="✅ OK" if coint_p < 0.05 else "❌ Fraco")
+    c6.metric("ADF spread p",   f"{adf_p:.4f}",   delta="✅ OK" if adf_p < 0.05 else "❌ Fraco")
 
-    sig = signal_label(z_now, z_entry, z_exit)
-    cls = signal_class(z_now, z_entry)
-    st.markdown(f'<div class="{cls}">⚡ Sinal: {sig}</div>', unsafe_allow_html=True)
+    sig, cls, sig_desc = classify_signal(z_now, dz_now, corr_now, cfg, zero_cross)
+    st.markdown(f'<div class="{cls}">⚡ {sig}</div>', unsafe_allow_html=True)
+    st.caption(sig_desc)
+
+    # Checklist do Alerta Máximo
+    if sig.startswith("🔴"):
+        st.markdown("**Checklist Alerta Máximo — validar antes de executar:**")
+        chk1, chk2 = st.columns(2)
+        with chk1:
+            st.checkbox("Liquidez OK", key="chk_liq")
+            st.checkbox("Spread OK", key="chk_spread")
+        with chk2:
+            st.checkbox(f"Cointegração plausível (p={coint_p:.3f})", value=coint_p < 0.05, key="chk_coint")
+            st.checkbox("Aluguel OK / checado", key="chk_alug")
     st.divider()
 
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True,
         row_heights=[0.30, 0.25, 0.25, 0.20],
-        subplot_titles=["Preços normalizados", f"Ratio {long_ticker}/{short_ticker}",
-                        f"Z-Score (janela {z_window}d)", "Correlação rolling"],
+        subplot_titles=["Preços normalizados", f"{ratio_lbl} {long_ticker}/{short_ticker} (média {mean_win}p, bandas {vol_win}p)",
+                        f"Z-Score ({mean_win}p/{vol_win}p)", f"Correlação rolling {corr_win}p"],
         vertical_spacing=0.06)
 
     long_norm  = long_data  / long_data.iloc[0]  * 100
@@ -303,22 +374,26 @@ if mode == "📈 Long / Short":
     fig.add_trace(go.Scatter(x=long_norm.index,  y=long_norm,  name=long_ticker,  line=dict(color="#a6e3a1", width=1.5)), row=1, col=1)
     fig.add_trace(go.Scatter(x=short_norm.index, y=short_norm, name=short_ticker, line=dict(color="#f38ba8", width=1.5)), row=1, col=1)
 
-    roll_mean  = ratio_series.rolling(z_window).mean()
-    roll_upper = roll_mean + z_entry * ratio_series.rolling(z_window).std()
-    roll_lower = roll_mean - z_entry * ratio_series.rolling(z_window).std()
-    fig.add_trace(go.Scatter(x=ratio_series.index, y=ratio_series, name="Ratio",    line=dict(color="#cba6f7", width=1.5)), row=2, col=1)
-    fig.add_trace(go.Scatter(x=roll_mean.index,    y=roll_mean,    name="Média",    line=dict(color="gray",   width=1, dash="dash")), row=2, col=1)
-    fig.add_trace(go.Scatter(x=roll_upper.index,   y=roll_upper,   name=f"+{z_entry}σ", line=dict(color="#fab387", width=1, dash="dot")), row=2, col=1)
-    fig.add_trace(go.Scatter(x=roll_lower.index,   y=roll_lower,   name=f"-{z_entry}σ", line=dict(color="#89dceb", width=1, dash="dot")), row=2, col=1)
+    roll_mean = ratio_series.rolling(mean_win).mean()
+    roll_std  = ratio_series.rolling(vol_win).std()
+    fig.add_trace(go.Scatter(x=ratio_series.index, y=ratio_series, name=ratio_lbl, line=dict(color="#cba6f7", width=1.5)), row=2, col=1)
+    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean, name="Média", line=dict(color="gray", width=1, dash="dash")), row=2, col=1)
+    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean + z_alert * roll_std,   name=f"+{z_alert:.2f}σ (alerta)",   line=dict(color="#f38ba8", width=1, dash="dot")), row=2, col=1)
+    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean + z_monitor * roll_std, name=f"+{z_monitor:.2f}σ (monitor)", line=dict(color="#fab387", width=1, dash="dot")), row=2, col=1)
+    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean - z_monitor * roll_std, name=f"-{z_monitor:.2f}σ (monitor)", line=dict(color="#fab387", width=1, dash="dot")), row=2, col=1)
+    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean - z_alert * roll_std,   name=f"-{z_alert:.2f}σ (alerta)",   line=dict(color="#89dceb", width=1, dash="dot")), row=2, col=1)
 
-    colors_z = ["#f38ba8" if v > z_entry else "#a6e3a1" if v < -z_entry else "#cdd6f4" for v in z_series.fillna(0)]
+    colors_z = ["#f38ba8" if v >= z_alert else "#fab387" if v >= z_monitor else
+                "#89dceb" if v <= -z_alert else "#a6e3a1" if v <= -z_monitor else "#cdd6f4"
+                for v in z_series.fillna(0)]
     fig.add_trace(go.Bar(x=z_series.index, y=z_series, name="Z-Score", marker_color=colors_z, opacity=0.8), row=3, col=1)
-    for level in [z_entry, -z_entry, z_exit, -z_exit]:
-        fig.add_hline(y=level, line_dash="dot", line_color="gray", opacity=0.5, row=3, col=1)
+    for level, dash in [(z_alert, "solid"), (-z_alert, "solid"), (z_monitor, "dot"), (-z_monitor, "dot"), (z_exit, "dash"), (-z_exit, "dash")]:
+        fig.add_hline(y=level, line_dash=dash, line_color="gray", opacity=0.5, row=3, col=1)
     fig.add_hline(y=0, line_color="white", opacity=0.3, row=3, col=1)
 
     fig.add_trace(go.Scatter(x=corr_series.index, y=corr_series, name="Correlação",
         line=dict(color="#f9e2af", width=1.5), fill="tozeroy", fillcolor="rgba(249,226,175,0.1)"), row=4, col=1)
+    fig.add_hline(y=corr_min, line_dash="dot", line_color="#a6e3a1", opacity=0.6, row=4, col=1)
 
     fig.update_layout(height=750, paper_bgcolor="#1e1e2e", plot_bgcolor="#1e1e2e",
         font=dict(color="#cdd6f4"), legend=dict(bgcolor="#313244"),
@@ -329,17 +404,20 @@ if mode == "📈 Long / Short":
 
     st.subheader("📋 Estatísticas do Spread")
     df_stats = pd.DataFrame({
-        "Métrica": ["Ratio atual","Ratio médio","Ratio máx","Ratio mín","Z-Score atual","Z-Score máx","Z-Score mín","Hedge ratio (β)","Correlação atual","Coint. p-valor","ADF p-valor"],
-        "Valor":   [f"{ratio_series.iloc[-1]:.4f}", f"{ratio_series.rolling(z_window).mean().iloc[-1]:.4f}",
-                    f"{ratio_series.max():.4f}", f"{ratio_series.min():.4f}", f"{z_now:.3f}",
+        "Métrica": [f"{ratio_lbl} atual", f"{ratio_lbl} médio ({mean_win}p)", "Z-Score atual", "Δz (1 pregão)",
+                    "Z-Score máx", "Z-Score mín", "Hedge ratio (β)", f"Correlação ({corr_win}p)",
+                    "Coint. p-valor", "ADF p-valor", "Holding máx (pregões)"],
+        "Valor":   [f"{ratio_series.iloc[-1]:.4f}", f"{ratio_series.rolling(mean_win).mean().iloc[-1]:.4f}",
+                    f"{z_now:.3f}", f"{dz_now:+.3f}",
                     f"{z_series.max():.3f}", f"{z_series.min():.3f}", f"{hedge:.4f}", f"{corr_now:.3f}",
-                    f"{coint_p:.4f}", f"{adf_p:.4f}"],
-        "Status":  ["—","—","—","—",
-                    "🔴 Vender ratio" if z_now > z_entry else "🟢 Comprar ratio" if z_now < -z_entry else "⚪ Neutro",
+                    f"{coint_p:.4f}", f"{adf_p:.4f}", f"{max_hold}"],
+        "Status":  ["—","—",
+                    "🔴 Vender ratio" if z_now >= z_monitor else "🟢 Comprar ratio" if z_now <= -z_monitor else "⚪ Neutro",
+                    "↗ esticando" if (dz_now > 0) == (z_now > 0) and abs(dz_now) >= dz_monitor else "↘ revertendo" if abs(dz_now) >= dz_monitor else "—",
                     "—","—","—",
-                    "✅ Alta" if corr_now > 0.7 else "⚠️ Média" if corr_now > 0.4 else "❌ Baixa",
+                    "✅ OK" if corr_now >= corr_min else "❌ Baixa",
                     "✅ Cointegrado" if coint_p < 0.05 else "❌ Não cointegrado",
-                    "✅ Estacionário" if adf_p < 0.05 else "❌ Não estacionário"],
+                    "✅ Estacionário" if adf_p < 0.05 else "❌ Não estacionário", "—"],
     })
     st.dataframe(df_stats, use_container_width=True, hide_index=True)
 
@@ -353,7 +431,8 @@ if mode == "📈 Long / Short":
             with st.spinner("Claude analisando o par…"):
                 try:
                     result = analyze_with_claude(api_key, long_ticker, short_ticker,
-                                                 ratio_series, z_series, coint_p, adf_p, hedge, corr_now, z_window)
+                                                 ratio_series, z_series, coint_p, adf_p, hedge, corr_now,
+                                                 mean_win=mean_win, dz=dz_now, cfg=cfg, use_log=use_log, sinal=sig)
                     st.session_state[analysis_key] = result
                 except anthropic.AuthenticationError:
                     st.error("API Key inválida.")
@@ -365,22 +444,28 @@ if mode == "📈 Long / Short":
     st.divider()
     with st.expander("ℹ️ Manual de Métricas — Long/Short"):
         st.markdown("""
-**📐 Ratio** — Preço do LONG ÷ preço do SHORT. Sobe quando o LONG se valoriza mais que o SHORT.
+**📐 Log-Ratio** — `ln(preço LONG / preço SHORT)`. O log torna as variações simétricas (subir e cair têm o mesmo peso) e estabiliza a variância — padrão em pairs trading.
 
-**📊 Z-Score** — Distância do Ratio em relação à sua média histórica (em desvios padrão). Coração da estratégia:
-- Z > +2 → par esticado → sinal SHORT no ratio
-- Z < -2 → par comprimido → sinal LONG no ratio
-- Z ≈ 0 → par na média → neutro
+**📊 Z-Score** — Distância do log-ratio em relação à média móvel (63 pregões), em desvios padrão (vol 63 pregões). Coração da estratégia.
 
-**🔗 Correlação** — Grau de sincronia entre os dois ativos (−1 a +1). Acima de 0.7 é ideal para Long/Short.
+**🔀 Δz (delta-z)** — Variação do Z-Score em 1 pregão. Confirma **momentum**: um |z| alto *com* Δz na mesma direção indica que o par ainda está esticando; Δz contrário sugere reversão a caminho.
 
-**🧪 Cointegração p-valor** — Teste Engle-Granger. p < 0.05 confirma que os ativos têm relação de longo prazo estável e tendem a convergir.
+**🔗 Correlação (252 pregões)** — Sincronia de longo prazo entre os ativos. O gatilho exige **≥ 0,75** para operar.
 
-**📉 ADF spread p** — Teste de estacionaridade do spread. p < 0.05 significa que o spread oscila em torno de uma média fixa (necessário para a estratégia funcionar).
+**🧪 Cointegração p-valor** — Teste Engle-Granger. p < 0,05 confirma relação estável de longo prazo (tendência a convergir).
 
-**⚖️ Hedge Ratio (β)** — Quanto do SHORT vender por unidade de LONG comprado para neutralizar o risco de mercado. Ex: β = 1.3 → vender R$1.300 no SHORT para cada R$1.000 no LONG.
+**📉 ADF spread p** — Estacionaridade do spread. p < 0,05 = spread oscila em torno de média fixa.
 
-**⚡ Sinal** — Conclusão prática: LONG ratio (comprar LONG + vender SHORT), SHORT ratio (inverso), FECHAR (Z voltou ao centro) ou NEUTRO.
+**⚖️ Hedge Ratio (β)** — Quanto do SHORT por unidade de LONG para neutralizar o risco de mercado.
+
+---
+**⚡ Níveis de Sinal (setup do backtest — meanWin 63 / volWin 63 / corrWin 252 / maxHold 63):**
+
+- **🟡 Monitorar** — `|z| ≥ 1,10` · `Δz ≥ 0,05` · `corr ≥ 0,75`. Par entrando em zona operável; acompanhar de perto.
+- **🔴 Alerta Máximo** — `|z| ≥ 1,50` · `Δz ≥ 0,15` · `corr ≥ 0,75` + checklist (liquidez, spread, cointegração, aluguel). Sinal forte de entrada.
+- **⚪ Convergência / Saída** — `|z| ≤ 0,40` **ou** cruzamento do zero. Encerrar / realizar. Holding máximo: **63 pregões**.
+
+> ⚠️ Rodar inicialmente em **produção sombra** antes de execução real. Validar custos, aluguel, spread, slippage e walk-forward.
         """)
 
     st.caption(f"Dados via Yahoo Finance · Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
