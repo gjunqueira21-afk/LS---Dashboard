@@ -12,14 +12,170 @@ from datetime import datetime
 
 st.set_page_config(page_title="LS Dashboard", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
+# ---------------------------------------------------------------------------
+# Design system — Catppuccin Mocha
+# LONG  = sempre verde  #a6e3a1   |   SHORT = sempre vermelho #f38ba8
+# Acento = roxo #cba6f7           |   Texto = #cdd6f4 sobre #1e1e2e / #313244
+# ---------------------------------------------------------------------------
+C_LONG    = "#a6e3a1"
+C_SHORT   = "#f38ba8"
+C_ACCENT  = "#cba6f7"
+C_MONITOR = "#fab387"
+C_TEAL    = "#94e2d5"
+C_YELLOW  = "#f9e2af"
+C_TEXT    = "#cdd6f4"
+C_MUTED   = "#a6adc8"
+C_FAINT   = "#7f849c"
+C_BG      = "#1e1e2e"
+C_SURF    = "#313244"
+C_CARD    = "#232334"
+C_GRID    = "#313244"
+C_NEUTRAL = "#45475a"
+
 st.markdown("""
 <style>
+    /* ---------- base ---------- */
+    .block-container { padding-top: 1.4rem; padding-bottom: 2.5rem; }
+    h1, h2, h3 { letter-spacing: -0.02em; }
+
+    /* ---------- legacy signal text (compat) ---------- */
     .signal-long    { color: #a6e3a1; font-weight: bold; font-size: 1.4rem; }
     .signal-short   { color: #f38ba8; font-weight: bold; font-size: 1.4rem; }
     .signal-neutral { color: #cdd6f4; font-weight: bold; font-size: 1.4rem; }
     .fund-header    { color: #cba6f7; font-size: 1.1rem; font-weight: bold; }
+
+    /* ---------- hero ---------- */
+    .ls-hero {
+        display: flex; justify-content: space-between; align-items: center;
+        flex-wrap: wrap; gap: 16px;
+        background: linear-gradient(135deg, #26263a 0%, #1e1e2e 65%);
+        border: 1px solid #313244; border-radius: 16px;
+        padding: 20px 26px; margin-bottom: 14px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+    }
+    .ls-hero h1 { font-size: 1.55rem; font-weight: 800; margin: 0; color: #cdd6f4; }
+    .ls-hero p  { margin: 4px 0 0; color: #a6adc8; font-size: 0.85rem; }
+    .ls-hero-pair { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .chip {
+        display: inline-block; padding: 6px 16px; border-radius: 999px;
+        font-weight: 700; font-size: 0.92rem; white-space: nowrap;
+    }
+    .chip-long  { background: rgba(166,227,161,0.12); color: #a6e3a1; border: 1px solid rgba(166,227,161,0.45); }
+    .chip-short { background: rgba(243,139,168,0.12); color: #f38ba8; border: 1px solid rgba(243,139,168,0.45); }
+    .chip-fund  { background: rgba(203,166,247,0.12); color: #cba6f7; border: 1px solid rgba(203,166,247,0.45); }
+    .pair-x { color: #585b70; font-weight: 800; font-size: 1.05rem; }
+
+    /* ---------- signal banner ---------- */
+    .signal-banner {
+        display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 14px;
+        border-radius: 14px; border: 1px solid #45475a;
+        padding: 15px 22px; margin: 4px 0 14px;
+        background: rgba(49,50,68,0.35);
+        box-shadow: 0 4px 14px rgba(0,0,0,0.22);
+    }
+    .signal-banner .sb-label { font-size: 1.28rem; font-weight: 800; color: #cdd6f4; }
+    .signal-banner .sb-desc  { font-size: 0.82rem; color: #a6adc8; }
+    .signal-banner.signal-long  { background: rgba(166,227,161,0.09); border-color: rgba(166,227,161,0.50); }
+    .signal-banner.signal-long .sb-label  { color: #a6e3a1; }
+    .signal-banner.signal-short { background: rgba(243,139,168,0.09); border-color: rgba(243,139,168,0.50); }
+    .signal-banner.signal-short .sb-label { color: #f38ba8; }
+
+    /* ---------- metric cards ---------- */
+    .metric-card {
+        background: #232334; border: 1px solid #313244; border-left: 3px solid #585b70;
+        border-radius: 12px; padding: 13px 15px; height: 100%;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    }
+    .metric-label {
+        font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+        letter-spacing: 0.07em; color: #a6adc8; white-space: nowrap;
+        overflow: hidden; text-overflow: ellipsis;
+    }
+    .metric-value {
+        font-size: 1.42rem; font-weight: 800; color: #cdd6f4;
+        margin-top: 2px; font-variant-numeric: tabular-nums;
+    }
+    .metric-sub { font-size: 0.75rem; color: #7f849c; margin-top: 2px; }
+    .metric-card.tone-green  { border-left-color: #a6e3a1; }
+    .metric-card.tone-green  .metric-value { color: #a6e3a1; }
+    .metric-card.tone-red    { border-left-color: #f38ba8; }
+    .metric-card.tone-red    .metric-value { color: #f38ba8; }
+    .metric-card.tone-purple { border-left-color: #cba6f7; }
+    .metric-card.tone-purple .metric-value { color: #cba6f7; }
+    .metric-card.tone-amber  { border-left-color: #f9e2af; }
+    .metric-card.tone-amber  .metric-value { color: #f9e2af; }
+
+    /* ---------- empty state ---------- */
+    .empty-state {
+        border: 1px dashed #45475a; border-radius: 14px;
+        padding: 44px 24px; text-align: center;
+        color: #a6adc8; background: rgba(49,50,68,0.25); font-size: 0.95rem;
+    }
+    .empty-state b { color: #cba6f7; }
+
+    /* ---------- streamlit widgets ---------- */
+    .stTabs [data-baseweb="tab-list"] { gap: 6px; border-bottom: 1px solid #313244; }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 9px 9px 0 0; padding: 8px 18px;
+        color: #a6adc8; font-weight: 600; background: transparent;
+    }
+    .stTabs [aria-selected="true"] { color: #cba6f7 !important; background: rgba(203,166,247,0.08); }
+
+    div[data-testid="stMetric"] {
+        background: #232334; border: 1px solid #313244;
+        border-radius: 12px; padding: 12px 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    }
+    div[data-testid="stMetric"] label { color: #a6adc8 !important; }
+
+    div[data-testid="stExpander"] {
+        border: 1px solid #313244; border-radius: 10px;
+        background: rgba(49,50,68,0.25); overflow: hidden;
+    }
+    div[data-testid="stDataFrame"] { border: 1px solid #313244; border-radius: 12px; overflow: hidden; }
+
+    section[data-testid="stSidebar"] { background: #181825; border-right: 1px solid #313244; }
+    section[data-testid="stSidebar"] hr { margin: 0.6rem 0; }
+
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #cba6f7 0%, #89b4fa 100%);
+        color: #11111b; font-weight: 700; border: none; border-radius: 10px;
+    }
+    .stButton > button[kind="primary"]:hover { filter: brightness(1.08); }
+
+    footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
+
+def metric_card(label, value, sub="", tone="neutral"):
+    """Card HTML para métricas-chave (camada visual apenas)."""
+    return (
+        f'<div class="metric-card tone-{tone}">'
+        f'<div class="metric-label">{label}</div>'
+        f'<div class="metric-value">{value}</div>'
+        f'<div class="metric-sub">{sub}</div>'
+        f'</div>'
+    )
+
+def style_fig(fig, height, top_margin=60, show_legend=True):
+    """Layout Plotly consistente com o tema (camada visual apenas)."""
+    fig.update_layout(
+        height=height,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(49,50,68,0.25)",
+        font=dict(color=C_TEXT, size=12),
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor="#181825", bordercolor=C_SURF, font=dict(color=C_TEXT, size=12)),
+        legend=dict(orientation="h", yanchor="bottom", y=1.005, x=0,
+                    bgcolor="rgba(0,0,0,0)", font=dict(size=12)),
+        showlegend=show_legend,
+        margin=dict(l=0, r=0, t=top_margin, b=0),
+    )
+    fig.update_xaxes(gridcolor=C_GRID, zerolinecolor=C_GRID, linecolor=C_SURF)
+    fig.update_yaxes(gridcolor=C_GRID, zerolinecolor=C_GRID, linecolor=C_SURF)
+    return fig
+
+PLOTLY_CONFIG = {"displayModeBar": False}
 
 default_api_key   = st.secrets.get("ANTHROPIC_API_KEY", "")
 default_brapi_key = st.secrets.get("BRAPI_TOKEN", "")
@@ -30,52 +186,45 @@ with st.sidebar:
     st.divider()
 
     if mode == "📈 Long / Short":
-        api_key = st.text_input("Anthropic API Key", value=default_api_key, type="password", placeholder="sk-ant-...")
-        st.divider()
         st.subheader("Ativos")
         col1, col2 = st.columns(2)
         with col1:
             long_ticker  = st.text_input("LONG",  value="PETR4.SA").upper().strip()
         with col2:
             short_ticker = st.text_input("SHORT", value="VALE3.SA").upper().strip()
-        st.divider()
-        st.subheader("Período")
+
         # 252 pregões de correlação exigem histórico longo → default 2 anos
         period_map   = {"6 meses": "6mo", "1 ano": "1y", "2 anos": "2y", "3 anos": "3y", "5 anos": "5y"}
         period_label = st.selectbox("Histórico", list(period_map.keys()), index=2)
         period       = period_map[period_label]
         interval     = "1d"  # estratégia definida em pregões (diário)
 
-        st.divider()
-        st.subheader("Ratio")
-        use_log = st.checkbox("Usar log ratio  ln(LONG/SHORT)", value=True)
-
-        st.divider()
-        st.subheader("Janelas (pregões)")
-        mean_win = st.number_input("Média do ratio (z-score)",    5, 504, 63)
-        vol_win  = st.number_input("Bandas / volatilidade (z-score)", 5, 504, 63)
-        corr_win = st.number_input("Correlação",                 20, 504, 252)
-        st.caption("O Z-Score usa a média e a volatilidade acima.")
-
-        st.divider()
-        st.subheader("🟡 Monitorar")
-        z_monitor  = st.slider("|Z-Score| ≥",  0.5, 3.0, 1.10, 0.05)
-        dz_monitor = st.slider("Δz (1 pregão) ≥", 0.0, 0.5, 0.05, 0.01)
-        corr_min   = st.slider("Correlação ≥", 0.0, 1.0, 0.75, 0.05)
-
-        st.divider()
-        st.subheader("🔴 Alerta Máximo")
-        z_alert  = st.slider("|Z-Score| ≥ ", 0.5, 3.0, 1.50, 0.05)
-        dz_alert = st.slider("Δz (1 pregão) ≥ ", 0.0, 0.5, 0.15, 0.01)
-
-        st.divider()
-        st.subheader("Saída / Convergência")
-        z_exit   = st.slider("Convergência |Z| ≤", 0.0, 1.0, 0.40, 0.05)
-        max_hold = st.number_input("Máx. holding (pregões)", 5, 252, 63)
-
-        st.divider()
-        auto_refresh = st.toggle("Auto-refresh (30s)", value=False)
         run_btn      = st.button("▶ Analisar", use_container_width=True, type="primary")
+        auto_refresh = st.toggle("Auto-refresh (30s)", value=False)
+        st.divider()
+
+        with st.expander("📐 Ratio & Janelas", expanded=False):
+            use_log  = st.checkbox("Usar log ratio  ln(LONG/SHORT)", value=True)
+            mean_win = st.number_input("Média do ratio (z-score)",    5, 504, 63)
+            vol_win  = st.number_input("Bandas / volatilidade (z-score)", 5, 504, 63)
+            corr_win = st.number_input("Correlação",                 20, 504, 252)
+            st.caption("O Z-Score usa a média e a volatilidade acima. Janelas em pregões.")
+
+        with st.expander("⚡ Gatilhos de Sinal", expanded=False):
+            st.markdown("**🟡 Monitorar**")
+            z_monitor  = st.slider("|Z-Score| ≥",  0.5, 3.0, 1.10, 0.05)
+            dz_monitor = st.slider("Δz (1 pregão) ≥", 0.0, 0.5, 0.05, 0.01)
+            corr_min   = st.slider("Correlação ≥", 0.0, 1.0, 0.75, 0.05)
+            st.markdown("**🔴 Alerta Máximo**")
+            z_alert  = st.slider("|Z-Score| ≥ ", 0.5, 3.0, 1.50, 0.05)
+            dz_alert = st.slider("Δz (1 pregão) ≥ ", 0.0, 0.5, 0.15, 0.01)
+
+        with st.expander("🏁 Saída / Convergência", expanded=False):
+            z_exit   = st.slider("Convergência |Z| ≤", 0.0, 1.0, 0.40, 0.05)
+            max_hold = st.number_input("Máx. holding (pregões)", 5, 252, 63)
+
+        with st.expander("🔑 API", expanded=False):
+            api_key = st.text_input("Anthropic API Key", value=default_api_key, type="password", placeholder="sk-ant-...")
 
     else:
         brapi_key = st.text_input("brapi.dev Token", value=default_brapi_key, type="password", placeholder="token (opcional)")
@@ -275,8 +424,20 @@ def parse_fundamentals(ticker: str, token: str) -> dict:
     }
 
 if mode == "📈 Long / Short":
-    st.title("📊 Long / Short Dashboard")
-    st.caption("Ratio em tempo real · Z-Score · Cointegração · Análise via Claude AI")
+    # ---------- hero ----------
+    st.markdown(f"""
+    <div class="ls-hero">
+        <div>
+            <h1>📊 Long / Short Dashboard</h1>
+            <p>Ratio em tempo real · Z-Score · Cointegração · Análise via Claude AI</p>
+        </div>
+        <div class="ls-hero-pair">
+            <span class="chip chip-long">▲ LONG · {long_ticker or "—"}</span>
+            <span class="pair-x">×</span>
+            <span class="chip chip-short">▼ SHORT · {short_ticker or "—"}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     if auto_refresh:
         time.sleep(30)
@@ -294,7 +455,11 @@ if mode == "📈 Long / Short":
     )
 
     if not (run_btn or auto_refresh or already_ran):
-        st.info("Configure os ativos na barra lateral e clique em **▶ Analisar**.")
+        st.markdown(
+            '<div class="empty-state">⚙️ Configure os ativos na barra lateral e clique em '
+            '<b>▶ Analisar</b> para carregar o par.</div>',
+            unsafe_allow_html=True,
+        )
         st.stop()
 
     if not long_ticker or not short_ticker:
@@ -338,18 +503,16 @@ if mode == "📈 Long / Short":
     corr_now = float(corr_series.dropna().iloc[-1]) if not corr_series.dropna().empty else 0.0
 
     ratio_lbl = "Log-Ratio" if use_log else "Ratio"
-    st.subheader(f"{long_ticker}  ×  {short_ticker}")
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric(ratio_lbl,        f"{ratio_series.iloc[-1]:.4f}")
-    c2.metric("Z-Score",        f"{z_now:.3f}")
-    c3.metric("Δz (1 pregão)",  f"{dz_now:+.3f}")
-    c4.metric(f"Correlação {corr_win}p", f"{corr_now:.3f}", delta="OK" if corr_now >= corr_min else "Baixa")
-    c5.metric("Cointegração p", f"{coint_p:.4f}", delta="✅ OK" if coint_p < 0.05 else "❌ Fraco")
-    c6.metric("ADF spread p",   f"{adf_p:.4f}",   delta="✅ OK" if adf_p < 0.05 else "❌ Fraco")
 
+    # ---------- sinal em destaque ----------
     sig, cls, sig_desc = classify_signal(z_now, dz_now, corr_now, cfg, zero_cross)
-    st.markdown(f'<div class="{cls}">⚡ {sig}</div>', unsafe_allow_html=True)
-    st.caption(sig_desc)
+    st.markdown(
+        f'<div class="signal-banner {cls}">'
+        f'<span class="sb-label">⚡ {sig}</span>'
+        f'<span class="sb-desc">{sig_desc}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
     # Checklist do Alerta Máximo
     if sig.startswith("🔴"):
@@ -361,88 +524,119 @@ if mode == "📈 Long / Short":
         with chk2:
             st.checkbox(f"Cointegração plausível (p={coint_p:.3f})", value=coint_p < 0.05, key="chk_coint")
             st.checkbox("Aluguel OK / checado", key="chk_alug")
-    st.divider()
 
-    fig = make_subplots(rows=4, cols=1, shared_xaxes=True,
-        row_heights=[0.30, 0.25, 0.25, 0.20],
-        subplot_titles=["Preços normalizados", f"{ratio_lbl} {long_ticker}/{short_ticker} (média {mean_win}p, bandas {vol_win}p)",
-                        f"Z-Score ({mean_win}p/{vol_win}p)", f"Correlação rolling {corr_win}p"],
-        vertical_spacing=0.06)
+    # ---------- métricas-chave em cards ----------
+    z_tone    = "red" if z_now >= z_monitor else "green" if z_now <= -z_monitor else "neutral"
+    corr_ok   = corr_now >= corr_min
+    coint_ok  = coint_p < 0.05
+    adf_ok    = adf_p < 0.05
 
-    long_norm  = long_data  / long_data.iloc[0]  * 100
-    short_norm = short_data / short_data.iloc[0] * 100
-    fig.add_trace(go.Scatter(x=long_norm.index,  y=long_norm,  name=long_ticker,  line=dict(color="#a6e3a1", width=1.5)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=short_norm.index, y=short_norm, name=short_ticker, line=dict(color="#f38ba8", width=1.5)), row=1, col=1)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.markdown(metric_card(ratio_lbl, f"{ratio_series.iloc[-1]:.4f}",
+                            f"média {mean_win}p: {ratio_series.rolling(mean_win).mean().iloc[-1]:.4f}",
+                            tone="purple"), unsafe_allow_html=True)
+    c2.markdown(metric_card("Z-Score", f"{z_now:.3f}",
+                            "vender ratio" if z_now >= z_monitor else "comprar ratio" if z_now <= -z_monitor else "zona neutra",
+                            tone=z_tone), unsafe_allow_html=True)
+    c3.markdown(metric_card("Δz · 1 pregão", f"{dz_now:+.3f}",
+                            "momentum do z-score", tone="neutral"), unsafe_allow_html=True)
+    c4.markdown(metric_card(f"Correlação {corr_win}p", f"{corr_now:.3f}",
+                            f"{'✅ OK' if corr_ok else '❌ Baixa'} · gatilho ≥ {corr_min:.2f}",
+                            tone="green" if corr_ok else "red"), unsafe_allow_html=True)
+    c5.markdown(metric_card("Cointegração p", f"{coint_p:.4f}",
+                            "✅ cointegrado" if coint_ok else "❌ fraco (p ≥ 0.05)",
+                            tone="green" if coint_ok else "red"), unsafe_allow_html=True)
+    c6.markdown(metric_card("ADF spread p", f"{adf_p:.4f}",
+                            "✅ estacionário" if adf_ok else "❌ fraco (p ≥ 0.05)",
+                            tone="green" if adf_ok else "red"), unsafe_allow_html=True)
 
-    roll_mean = ratio_series.rolling(mean_win).mean()
-    roll_std  = ratio_series.rolling(vol_win).std()
-    fig.add_trace(go.Scatter(x=ratio_series.index, y=ratio_series, name=ratio_lbl, line=dict(color="#cba6f7", width=1.5)), row=2, col=1)
-    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean, name="Média", line=dict(color="gray", width=1, dash="dash")), row=2, col=1)
-    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean + z_alert * roll_std,   name=f"+{z_alert:.2f}σ (alerta)",   line=dict(color="#f38ba8", width=1, dash="dot")), row=2, col=1)
-    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean + z_monitor * roll_std, name=f"+{z_monitor:.2f}σ (monitor)", line=dict(color="#fab387", width=1, dash="dot")), row=2, col=1)
-    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean - z_monitor * roll_std, name=f"-{z_monitor:.2f}σ (monitor)", line=dict(color="#fab387", width=1, dash="dot")), row=2, col=1)
-    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean - z_alert * roll_std,   name=f"-{z_alert:.2f}σ (alerta)",   line=dict(color="#89dceb", width=1, dash="dot")), row=2, col=1)
+    st.markdown("")
 
-    colors_z = ["#f38ba8" if v >= z_alert else "#fab387" if v >= z_monitor else
-                "#89dceb" if v <= -z_alert else "#a6e3a1" if v <= -z_monitor else "#cdd6f4"
-                for v in z_series.fillna(0)]
-    fig.add_trace(go.Bar(x=z_series.index, y=z_series, name="Z-Score", marker_color=colors_z, opacity=0.8), row=3, col=1)
-    for level, dash in [(z_alert, "solid"), (-z_alert, "solid"), (z_monitor, "dot"), (-z_monitor, "dot"), (z_exit, "dash"), (-z_exit, "dash")]:
-        fig.add_hline(y=level, line_dash=dash, line_color="gray", opacity=0.5, row=3, col=1)
-    fig.add_hline(y=0, line_color="white", opacity=0.3, row=3, col=1)
+    # ---------- conteúdo em abas ----------
+    tab_charts, tab_stats, tab_ai, tab_manual = st.tabs(
+        ["📊 Gráficos", "📋 Estatísticas", "🤖 Análise IA", "ℹ️ Manual"]
+    )
 
-    fig.add_trace(go.Scatter(x=corr_series.index, y=corr_series, name="Correlação",
-        line=dict(color="#f9e2af", width=1.5), fill="tozeroy", fillcolor="rgba(249,226,175,0.1)"), row=4, col=1)
-    fig.add_hline(y=corr_min, line_dash="dot", line_color="#a6e3a1", opacity=0.6, row=4, col=1)
+    with tab_charts:
+        fig = make_subplots(rows=4, cols=1, shared_xaxes=True,
+            row_heights=[0.30, 0.25, 0.25, 0.20],
+            subplot_titles=["Preços normalizados (base 100)",
+                            f"{ratio_lbl} {long_ticker}/{short_ticker} · média {mean_win}p · bandas {vol_win}p",
+                            f"Z-Score ({mean_win}p/{vol_win}p)", f"Correlação rolling {corr_win}p"],
+            vertical_spacing=0.06)
 
-    fig.update_layout(height=750, paper_bgcolor="#1e1e2e", plot_bgcolor="#1e1e2e",
-        font=dict(color="#cdd6f4"), legend=dict(bgcolor="#313244"),
-        margin=dict(l=0, r=0, t=40, b=0))
-    fig.update_xaxes(gridcolor="#313244")
-    fig.update_yaxes(gridcolor="#313244")
-    st.plotly_chart(fig, use_container_width=True)
+        long_norm  = long_data  / long_data.iloc[0]  * 100
+        short_norm = short_data / short_data.iloc[0] * 100
+        fig.add_trace(go.Scatter(x=long_norm.index,  y=long_norm,  name=f"▲ {long_ticker}",  line=dict(color=C_LONG,  width=2)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=short_norm.index, y=short_norm, name=f"▼ {short_ticker}", line=dict(color=C_SHORT, width=2)), row=1, col=1)
 
-    st.subheader("📋 Estatísticas do Spread")
-    df_stats = pd.DataFrame({
-        "Métrica": [f"{ratio_lbl} atual", f"{ratio_lbl} médio ({mean_win}p)", "Z-Score atual", "Δz (1 pregão)",
-                    "Z-Score máx", "Z-Score mín", "Hedge ratio (β)", f"Correlação ({corr_win}p)",
-                    "Coint. p-valor", "ADF p-valor", "Holding máx (pregões)"],
-        "Valor":   [f"{ratio_series.iloc[-1]:.4f}", f"{ratio_series.rolling(mean_win).mean().iloc[-1]:.4f}",
-                    f"{z_now:.3f}", f"{dz_now:+.3f}",
-                    f"{z_series.max():.3f}", f"{z_series.min():.3f}", f"{hedge:.4f}", f"{corr_now:.3f}",
-                    f"{coint_p:.4f}", f"{adf_p:.4f}", f"{max_hold}"],
-        "Status":  ["—","—",
-                    "🔴 Vender ratio" if z_now >= z_monitor else "🟢 Comprar ratio" if z_now <= -z_monitor else "⚪ Neutro",
-                    "↗ esticando" if (dz_now > 0) == (z_now > 0) and abs(dz_now) >= dz_monitor else "↘ revertendo" if abs(dz_now) >= dz_monitor else "—",
-                    "—","—","—",
-                    "✅ OK" if corr_now >= corr_min else "❌ Baixa",
-                    "✅ Cointegrado" if coint_p < 0.05 else "❌ Não cointegrado",
-                    "✅ Estacionário" if adf_p < 0.05 else "❌ Não estacionário", "—"],
-    })
-    st.dataframe(df_stats, use_container_width=True, hide_index=True)
+        roll_mean = ratio_series.rolling(mean_win).mean()
+        roll_std  = ratio_series.rolling(vol_win).std()
+        fig.add_trace(go.Scatter(x=ratio_series.index, y=ratio_series, name=ratio_lbl, line=dict(color=C_ACCENT, width=2)), row=2, col=1)
+        fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean, name="Média", line=dict(color="#585b70", width=1, dash="dash")), row=2, col=1)
+        fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean + z_alert * roll_std,   name=f"+{z_alert:.2f}σ (alerta)",   line=dict(color=C_SHORT,   width=1, dash="dot")), row=2, col=1)
+        fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean + z_monitor * roll_std, name=f"±{z_monitor:.2f}σ (monitor)", line=dict(color=C_MONITOR, width=1, dash="dot")), row=2, col=1)
+        fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean - z_monitor * roll_std, showlegend=False, name=f"-{z_monitor:.2f}σ (monitor)", line=dict(color=C_MONITOR, width=1, dash="dot")), row=2, col=1)
+        fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean - z_alert * roll_std,   name=f"-{z_alert:.2f}σ (alerta)",   line=dict(color=C_LONG,    width=1, dash="dot")), row=2, col=1)
 
-    st.divider()
-    st.subheader("🤖 Análise Claude AI")
-    if not api_key:
-        st.warning("Insira sua Anthropic API Key na barra lateral para ativar a análise via Claude.")
-    else:
-        analysis_key = f"claude_analysis_{long_ticker}_{short_ticker}"
-        if st.button("🧠 Gerar análise com Claude", type="secondary"):
-            with st.spinner("Claude analisando o par…"):
-                try:
-                    result = analyze_with_claude(api_key, long_ticker, short_ticker,
-                                                 ratio_series, z_series, coint_p, adf_p, hedge, corr_now,
-                                                 mean_win=mean_win, dz=dz_now, cfg=cfg, use_log=use_log, sinal=sig)
-                    st.session_state[analysis_key] = result
-                except anthropic.AuthenticationError:
-                    st.error("API Key inválida.")
-                except Exception as e:
-                    st.error(f"Erro: {e}")
-        if analysis_key in st.session_state:
-            st.markdown(st.session_state[analysis_key])
+        # verde = zona LONG ratio (z negativo) · vermelho = zona SHORT ratio (z positivo)
+        colors_z = [C_SHORT if v >= z_alert else C_MONITOR if v >= z_monitor else
+                    C_LONG if v <= -z_alert else C_TEAL if v <= -z_monitor else C_NEUTRAL
+                    for v in z_series.fillna(0)]
+        fig.add_trace(go.Bar(x=z_series.index, y=z_series, name="Z-Score", marker_color=colors_z, opacity=0.9), row=3, col=1)
+        for level, dash in [(z_alert, "solid"), (-z_alert, "solid"), (z_monitor, "dot"), (-z_monitor, "dot"), (z_exit, "dash"), (-z_exit, "dash")]:
+            fig.add_hline(y=level, line_dash=dash, line_color="#585b70", opacity=0.55, row=3, col=1)
+        fig.add_hline(y=0, line_color=C_TEXT, opacity=0.3, row=3, col=1)
 
-    st.divider()
-    with st.expander("ℹ️ Manual de Métricas — Long/Short"):
+        fig.add_trace(go.Scatter(x=corr_series.index, y=corr_series, name="Correlação",
+            line=dict(color=C_YELLOW, width=2), fill="tozeroy", fillcolor="rgba(249,226,175,0.08)"), row=4, col=1)
+        fig.add_hline(y=corr_min, line_dash="dot", line_color=C_LONG, opacity=0.6, row=4, col=1)
+
+        style_fig(fig, height=780, top_margin=70)
+        fig.update_annotations(font=dict(size=13, color=C_MUTED))
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
+    with tab_stats:
+        st.markdown(f'<span class="fund-header">📋 Estatísticas do Spread</span>', unsafe_allow_html=True)
+        df_stats = pd.DataFrame({
+            "Métrica": [f"{ratio_lbl} atual", f"{ratio_lbl} médio ({mean_win}p)", "Z-Score atual", "Δz (1 pregão)",
+                        "Z-Score máx", "Z-Score mín", "Hedge ratio (β)", f"Correlação ({corr_win}p)",
+                        "Coint. p-valor", "ADF p-valor", "Holding máx (pregões)"],
+            "Valor":   [f"{ratio_series.iloc[-1]:.4f}", f"{ratio_series.rolling(mean_win).mean().iloc[-1]:.4f}",
+                        f"{z_now:.3f}", f"{dz_now:+.3f}",
+                        f"{z_series.max():.3f}", f"{z_series.min():.3f}", f"{hedge:.4f}", f"{corr_now:.3f}",
+                        f"{coint_p:.4f}", f"{adf_p:.4f}", f"{max_hold}"],
+            "Status":  ["—","—",
+                        "🔴 Vender ratio" if z_now >= z_monitor else "🟢 Comprar ratio" if z_now <= -z_monitor else "⚪ Neutro",
+                        "↗ esticando" if (dz_now > 0) == (z_now > 0) and abs(dz_now) >= dz_monitor else "↘ revertendo" if abs(dz_now) >= dz_monitor else "—",
+                        "—","—","—",
+                        "✅ OK" if corr_now >= corr_min else "❌ Baixa",
+                        "✅ Cointegrado" if coint_p < 0.05 else "❌ Não cointegrado",
+                        "✅ Estacionário" if adf_p < 0.05 else "❌ Não estacionário", "—"],
+        })
+        st.dataframe(df_stats, use_container_width=True, hide_index=True)
+
+    with tab_ai:
+        st.markdown('<span class="fund-header">🤖 Análise Claude AI</span>', unsafe_allow_html=True)
+        if not api_key:
+            st.warning("Insira sua Anthropic API Key na barra lateral (expander **🔑 API**) para ativar a análise via Claude.")
+        else:
+            analysis_key = f"claude_analysis_{long_ticker}_{short_ticker}"
+            if st.button("🧠 Gerar análise com Claude", type="secondary"):
+                with st.spinner("Claude analisando o par…"):
+                    try:
+                        result = analyze_with_claude(api_key, long_ticker, short_ticker,
+                                                     ratio_series, z_series, coint_p, adf_p, hedge, corr_now,
+                                                     mean_win=mean_win, dz=dz_now, cfg=cfg, use_log=use_log, sinal=sig)
+                        st.session_state[analysis_key] = result
+                    except anthropic.AuthenticationError:
+                        st.error("API Key inválida.")
+                    except Exception as e:
+                        st.error(f"Erro: {e}")
+            if analysis_key in st.session_state:
+                st.markdown(st.session_state[analysis_key])
+
+    with tab_manual:
         st.markdown("""
 **📐 Log-Ratio** — `ln(preço LONG / preço SHORT)`. O log torna as variações simétricas (subir e cair têm o mesmo peso) e estabiliza a variância — padrão em pairs trading.
 
@@ -472,11 +666,25 @@ if mode == "📈 Long / Short":
 
 
 else:
-    st.title("🏦 Fundamentos — Comparação de Empresas")
-    st.caption("Dados via brapi.dev · Fonte: B3 / CVM")
+    # ---------- hero ----------
+    st.markdown("""
+    <div class="ls-hero">
+        <div>
+            <h1>🏦 Fundamentos — Comparação de Empresas</h1>
+            <p>Dados via brapi.dev · Fonte: B3 / CVM</p>
+        </div>
+        <div class="ls-hero-pair">
+            <span class="chip chip-fund">📊 Análise Fundamentalista</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     if not load_btn:
-        st.info("Selecione um grupo ou digite os tickers na barra lateral e clique em **🔍 Carregar Fundamentos**.")
+        st.markdown(
+            '<div class="empty-state">🏦 Selecione um grupo ou digite os tickers na barra lateral '
+            'e clique em <b>🔍 Carregar Fundamentos</b>.</div>',
+            unsafe_allow_html=True,
+        )
         st.stop()
 
     tickers = [t.strip().upper().replace(".SA", "") for t in fund_tickers_raw.splitlines() if t.strip()]
@@ -506,176 +714,176 @@ else:
 
     df = pd.DataFrame(rows)
 
-    st.subheader("📋 Tabela Comparativa")
+    # Cor categórica fixa por empresa (mesma cor em TODOS os gráficos)
+    COLORS = ["#cba6f7", "#a6e3a1", "#f38ba8", "#fab387", "#89dceb", "#f9e2af"]
+    company_colors = {t: COLORS[i % len(COLORS)] for i, t in enumerate(df["Ticker"].tolist())}
 
-    DISPLAY_COLS = [
-        "Ticker", "Nome", "Setor",
-        "P/L", "P/L Fwd", "P/VP", "EV/EBITDA",
-        "ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)",
-        "Div. Yield (%)", "Dív./PL", "Liq. Corrente",
-        "Cresc. Receita (%)", "Cresc. Lucro (%)",
-        "Beta", "Market Cap",
-    ]
-
-    df_display = df[DISPLAY_COLS].copy()
-    pct_cols  = ["ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)", "Div. Yield (%)", "Cresc. Receita (%)", "Cresc. Lucro (%)"]
-    num_cols  = ["P/L", "P/L Fwd", "P/VP", "EV/EBITDA", "Dív./PL", "Liq. Corrente", "Beta"]
-
-    def fmt_cell(v, is_pct=False):
-        if v is None or (isinstance(v, float) and np.isnan(v)):
-            return "—"
-        if is_pct:
-            return f"{v:.2f}%"
-        return f"{v:.2f}"
-
-    for col in pct_cols:
-        if col in df_display.columns:
-            df_display[col] = df_display[col].apply(lambda x: fmt_cell(x, is_pct=True))
-    for col in num_cols:
-        if col in df_display.columns:
-            df_display[col] = df_display[col].apply(lambda x: fmt_cell(x))
-    df_display["Market Cap"] = df["Market Cap"].apply(fmt_market_cap)
-
-    st.dataframe(df_display, use_container_width=True, hide_index=True)
-    st.divider()
-
-    st.subheader("📊 Comparação Visual")
-
-    CHART_METRICS = {
-        "P/L": ("P/L", False),
-        "P/VP": ("P/VP", False),
-        "ROE (%)": ("ROE (%)", True),
-        "Marg. Liq. (%)": ("Marg. Liq. (%)", True),
-        "Div. Yield (%)": ("Div. Yield (%)", True),
-        "EV/EBITDA": ("EV/EBITDA", False),
-        "Dív./PL": ("Dív./PL", False),
-        "Cresc. Receita (%)": ("Cresc. Receita (%)", True),
-    }
-
-    selected_metrics = st.multiselect(
-        "Métricas para comparar",
-        list(CHART_METRICS.keys()),
-        default=["ROE (%)", "Marg. Liq. (%)", "Div. Yield (%)", "P/L"],
+    tab_table, tab_compare, tab_radar, tab_ind = st.tabs(
+        ["📋 Tabela", "📊 Comparação", "🕸️ Radar", "🔍 Individual"]
     )
 
-    if selected_metrics:
-        cols_per_row = 2
-        metric_chunks = [selected_metrics[i:i+cols_per_row] for i in range(0, len(selected_metrics), cols_per_row)]
-        COLORS = ["#cba6f7", "#a6e3a1", "#f38ba8", "#fab387", "#89dceb", "#f9e2af"]
+    with tab_table:
+        st.markdown('<span class="fund-header">📋 Tabela Comparativa</span>', unsafe_allow_html=True)
 
-        for chunk in metric_chunks:
-            row_cols = st.columns(len(chunk))
-            for ci, metric in enumerate(chunk):
-                col_name, _ = CHART_METRICS[metric]
-                vals = df[col_name].tolist()
-                labels = df["Ticker"].tolist()
-                y = []
-                x = []
-                for label, v in zip(labels, vals):
-                    if v is not None and not (isinstance(v, float) and np.isnan(v)):
-                        y.append(float(v))
-                        x.append(label)
-                if not y:
-                    continue
-                bar_colors = [COLORS[i % len(COLORS)] for i in range(len(x))]
-                fig_bar = go.Figure(go.Bar(
-                    x=x, y=y,
-                    marker_color=bar_colors,
-                    text=[f"{v:.1f}" for v in y],
-                    textposition="outside",
-                ))
-                fig_bar.update_layout(
-                    title=metric,
-                    height=320,
-                    paper_bgcolor="#1e1e2e",
-                    plot_bgcolor="#1e1e2e",
-                    font=dict(color="#cdd6f4", size=11),
-                    margin=dict(l=0, r=0, t=40, b=0),
-                    showlegend=False,
-                )
-                fig_bar.update_xaxes(gridcolor="#313244")
-                fig_bar.update_yaxes(gridcolor="#313244")
-                with row_cols[ci]:
-                    st.plotly_chart(fig_bar, use_container_width=True)
+        DISPLAY_COLS = [
+            "Ticker", "Nome", "Setor",
+            "P/L", "P/L Fwd", "P/VP", "EV/EBITDA",
+            "ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)",
+            "Div. Yield (%)", "Dív./PL", "Liq. Corrente",
+            "Cresc. Receita (%)", "Cresc. Lucro (%)",
+            "Beta", "Market Cap",
+        ]
 
-    st.divider()
+        df_display = df[DISPLAY_COLS].copy()
+        pct_cols  = ["ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)", "Div. Yield (%)", "Cresc. Receita (%)", "Cresc. Lucro (%)"]
+        num_cols  = ["P/L", "P/L Fwd", "P/VP", "EV/EBITDA", "Dív./PL", "Liq. Corrente", "Beta"]
 
-    RADAR_METRICS = ["ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)", "Div. Yield (%)"]
-    radar_df = df[["Ticker"] + RADAR_METRICS].copy()
+        def fmt_cell(v, is_pct=False):
+            if v is None or (isinstance(v, float) and np.isnan(v)):
+                return "—"
+            if is_pct:
+                return f"{v:.2f}%"
+            return f"{v:.2f}"
 
-    # Converte para numérico e substitui NaN pela mediana da coluna (evita empresas sumindo no centro)
-    for col in RADAR_METRICS:
-        radar_df[col] = pd.to_numeric(radar_df[col], errors="coerce")
-        median_val = radar_df[col].median()
-        radar_df[col] = radar_df[col].fillna(median_val if not np.isnan(median_val) else 0)
+        for col in pct_cols:
+            if col in df_display.columns:
+                df_display[col] = df_display[col].apply(lambda x: fmt_cell(x, is_pct=True))
+        for col in num_cols:
+            if col in df_display.columns:
+                df_display[col] = df_display[col].apply(lambda x: fmt_cell(x))
+        df_display["Market Cap"] = df["Market Cap"].apply(fmt_market_cap)
 
-    # Normaliza 0-100 via percentile rank (robusto a outliers — evita formas distorcidas)
-    for col in RADAR_METRICS:
-        if radar_df[col].nunique() > 1:
-            radar_df[col] = radar_df[col].rank(pct=True) * 100
-        else:
-            radar_df[col] = 50.0
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
 
-    st.subheader("🕸️ Radar — Qualidade (ranking relativo)")
-    st.caption("Posição relativa de cada empresa dentro do grupo (0 = pior, 100 = melhor). Dados ausentes preenchidos pela mediana.")
-    fig_radar = go.Figure()
-    RADAR_COLORS = ["#cba6f7", "#a6e3a1", "#f38ba8", "#fab387", "#89dceb", "#f9e2af"]
-    for idx, row_ in radar_df.iterrows():
-        vals = [round(float(row_[m]), 1) for m in RADAR_METRICS]
-        fig_radar.add_trace(go.Scatterpolar(
-            r=vals + [vals[0]],
-            theta=RADAR_METRICS + [RADAR_METRICS[0]],
-            fill="toself",
-            name=row_["Ticker"],
-            line=dict(color=RADAR_COLORS[idx % len(RADAR_COLORS)], width=2),
-            opacity=0.55,
-        ))
-    fig_radar.update_layout(
-        polar=dict(
-            bgcolor="#313244",
-            radialaxis=dict(visible=True, range=[0, 100], color="#cdd6f4", tickfont=dict(size=10)),
-            angularaxis=dict(color="#cdd6f4", tickfont=dict(size=11)),
-        ),
-        paper_bgcolor="#1e1e2e",
-        font=dict(color="#cdd6f4"),
-        legend=dict(bgcolor="#313244", font=dict(size=12)),
-        height=500,
-        margin=dict(l=60, r=60, t=30, b=30),
-    )
-    st.plotly_chart(fig_radar, use_container_width=True)
+    with tab_compare:
+        st.markdown('<span class="fund-header">📊 Comparação Visual</span>', unsafe_allow_html=True)
 
-    st.divider()
+        CHART_METRICS = {
+            "P/L": ("P/L", False),
+            "P/VP": ("P/VP", False),
+            "ROE (%)": ("ROE (%)", True),
+            "Marg. Liq. (%)": ("Marg. Liq. (%)", True),
+            "Div. Yield (%)": ("Div. Yield (%)", True),
+            "EV/EBITDA": ("EV/EBITDA", False),
+            "Dív./PL": ("Dív./PL", False),
+            "Cresc. Receita (%)": ("Cresc. Receita (%)", True),
+        }
 
-    st.subheader("🔍 Visão Individual")
-    selected_ticker = st.selectbox("Selecionar empresa", df["Ticker"].tolist())
-    row_ind = df[df["Ticker"] == selected_ticker].iloc[0]
+        selected_metrics = st.multiselect(
+            "Métricas para comparar",
+            list(CHART_METRICS.keys()),
+            default=["ROE (%)", "Marg. Liq. (%)", "Div. Yield (%)", "P/L"],
+        )
 
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        st.markdown(f"**{row_ind['Nome']}**")
-        st.caption(f"Setor: {row_ind['Setor']}")
-        st.metric("Market Cap", fmt_market_cap(row_ind["Market Cap"]))
-        st.metric("Beta", safe_num(row_ind["Beta"]))
-    with col_b:
-        st.metric("P/L",      safe_num(row_ind["P/L"]))
-        st.metric("P/L Fwd",  safe_num(row_ind["P/L Fwd"]))
-        st.metric("P/VP",     safe_num(row_ind["P/VP"]))
-        st.metric("EV/EBITDA",safe_num(row_ind["EV/EBITDA"]))
-    with col_c:
-        st.metric("ROE",         safe_pct(row_ind["ROE (%)"]))
-        st.metric("ROA",         safe_pct(row_ind["ROA (%)"]))
-        st.metric("Marg. Líq.",  safe_pct(row_ind["Marg. Liq. (%)"]))
-        st.metric("Div. Yield",  safe_pct(row_ind["Div. Yield (%)"]))
+        if selected_metrics:
+            cols_per_row = 2
+            metric_chunks = [selected_metrics[i:i+cols_per_row] for i in range(0, len(selected_metrics), cols_per_row)]
 
-    col_d, col_e = st.columns(2)
-    with col_d:
-        st.metric("Dívida/PL",       safe_num(row_ind["Dív./PL"]))
-        st.metric("Liq. Corrente",   safe_num(row_ind["Liq. Corrente"]))
-    with col_e:
-        st.metric("Cresc. Receita",  safe_pct(row_ind["Cresc. Receita (%)"]))
-        st.metric("Cresc. Lucro",    safe_pct(row_ind["Cresc. Lucro (%)"]))
+            for chunk in metric_chunks:
+                row_cols = st.columns(len(chunk))
+                for ci, metric in enumerate(chunk):
+                    col_name, _ = CHART_METRICS[metric]
+                    vals = df[col_name].tolist()
+                    labels = df["Ticker"].tolist()
+                    y = []
+                    x = []
+                    for label, v in zip(labels, vals):
+                        if v is not None and not (isinstance(v, float) and np.isnan(v)):
+                            y.append(float(v))
+                            x.append(label)
+                    if not y:
+                        continue
+                    bar_colors = [company_colors[label] for label in x]
+                    fig_bar = go.Figure(go.Bar(
+                        x=x, y=y,
+                        marker_color=bar_colors,
+                        text=[f"{v:.1f}" for v in y],
+                        textposition="outside",
+                        textfont=dict(size=12, color=C_TEXT),
+                    ))
+                    style_fig(fig_bar, height=320, top_margin=46, show_legend=False)
+                    fig_bar.update_layout(
+                        title=dict(text=metric, font=dict(size=14, color=C_TEXT)),
+                        hovermode="x",
+                    )
+                    with row_cols[ci]:
+                        st.plotly_chart(fig_bar, use_container_width=True, config=PLOTLY_CONFIG)
 
-    st.divider()
+    with tab_radar:
+        RADAR_METRICS = ["ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)", "Div. Yield (%)"]
+        radar_df = df[["Ticker"] + RADAR_METRICS].copy()
+
+        # Converte para numérico e substitui NaN pela mediana da coluna (evita empresas sumindo no centro)
+        for col in RADAR_METRICS:
+            radar_df[col] = pd.to_numeric(radar_df[col], errors="coerce")
+            median_val = radar_df[col].median()
+            radar_df[col] = radar_df[col].fillna(median_val if not np.isnan(median_val) else 0)
+
+        # Normaliza 0-100 via percentile rank (robusto a outliers — evita formas distorcidas)
+        for col in RADAR_METRICS:
+            if radar_df[col].nunique() > 1:
+                radar_df[col] = radar_df[col].rank(pct=True) * 100
+            else:
+                radar_df[col] = 50.0
+
+        st.markdown('<span class="fund-header">🕸️ Radar — Qualidade (ranking relativo)</span>', unsafe_allow_html=True)
+        st.caption("Posição relativa de cada empresa dentro do grupo (0 = pior, 100 = melhor). Dados ausentes preenchidos pela mediana.")
+        fig_radar = go.Figure()
+        for idx, row_ in radar_df.iterrows():
+            vals = [round(float(row_[m]), 1) for m in RADAR_METRICS]
+            fig_radar.add_trace(go.Scatterpolar(
+                r=vals + [vals[0]],
+                theta=RADAR_METRICS + [RADAR_METRICS[0]],
+                fill="toself",
+                name=row_["Ticker"],
+                line=dict(color=company_colors.get(row_["Ticker"], COLORS[idx % len(COLORS)]), width=2),
+                opacity=0.55,
+            ))
+        fig_radar.update_layout(
+            polar=dict(
+                bgcolor="rgba(49,50,68,0.35)",
+                radialaxis=dict(visible=True, range=[0, 100], color=C_MUTED, tickfont=dict(size=11)),
+                angularaxis=dict(color=C_TEXT, tickfont=dict(size=12)),
+            ),
+            paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color=C_TEXT, size=12),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.12, x=0,
+                        bgcolor="rgba(0,0,0,0)", font=dict(size=12)),
+            height=520,
+            margin=dict(l=60, r=60, t=30, b=60),
+        )
+        st.plotly_chart(fig_radar, use_container_width=True, config=PLOTLY_CONFIG)
+
+    with tab_ind:
+        st.markdown('<span class="fund-header">🔍 Visão Individual</span>', unsafe_allow_html=True)
+        selected_ticker = st.selectbox("Selecionar empresa", df["Ticker"].tolist())
+        row_ind = df[df["Ticker"] == selected_ticker].iloc[0]
+
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.markdown(f"**{row_ind['Nome']}**")
+            st.caption(f"Setor: {row_ind['Setor']}")
+            st.metric("Market Cap", fmt_market_cap(row_ind["Market Cap"]))
+            st.metric("Beta", safe_num(row_ind["Beta"]))
+        with col_b:
+            st.metric("P/L",      safe_num(row_ind["P/L"]))
+            st.metric("P/L Fwd",  safe_num(row_ind["P/L Fwd"]))
+            st.metric("P/VP",     safe_num(row_ind["P/VP"]))
+            st.metric("EV/EBITDA",safe_num(row_ind["EV/EBITDA"]))
+        with col_c:
+            st.metric("ROE",         safe_pct(row_ind["ROE (%)"]))
+            st.metric("ROA",         safe_pct(row_ind["ROA (%)"]))
+            st.metric("Marg. Líq.",  safe_pct(row_ind["Marg. Liq. (%)"]))
+            st.metric("Div. Yield",  safe_pct(row_ind["Div. Yield (%)"]))
+
+        col_d, col_e = st.columns(2)
+        with col_d:
+            st.metric("Dívida/PL",       safe_num(row_ind["Dív./PL"]))
+            st.metric("Liq. Corrente",   safe_num(row_ind["Liq. Corrente"]))
+        with col_e:
+            st.metric("Cresc. Receita",  safe_pct(row_ind["Cresc. Receita (%)"]))
+            st.metric("Cresc. Lucro",    safe_pct(row_ind["Cresc. Lucro (%)"]))
+
     with st.expander("ℹ️ Manual de Métricas — Fundamentos"):
         st.markdown("""
 **P/L (Preço/Lucro)** — Quantas vezes o lucro anual está embutido no preço. Menor é mais barato.
