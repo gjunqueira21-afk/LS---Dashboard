@@ -16,20 +16,66 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-st.markdown("""
+# ─── Design System — tokens de cor (usados no CSS e nos gráficos Plotly) ────────
+THEME = {
+    "bg":         "#0f1117",
+    "surface":    "#1a1d29",
+    "surface_2":  "#232734",
+    "border":     "#2a2e3d",
+    "text":       "#e6e8ef",
+    "text_muted": "#9ca3b4",
+    "accent":     "#7c6cf0",
+    "pos":        "#34d399",
+    "neg":        "#f87171",
+    "warn":       "#fbbf24",
+    "grid":       "#232734",
+}
+
+st.markdown(f"""
 <style>
-    /* Touch-friendly + compacto pra celular */
-    .block-container { padding-top: 1rem; padding-bottom: 3rem; max-width: 640px; }
-    .stButton button { height: 3rem; font-size: 1.05rem; border-radius: 12px; }
-    .signal-box {
-        padding: 0.9rem 1rem; border-radius: 14px; font-weight: 700;
-        font-size: 1.15rem; text-align: center; margin: 0.4rem 0 0.8rem 0;
-    }
-    .sig-long    { background:#1e3a2a; color:#a6e3a1; }
-    .sig-short   { background:#3a1e26; color:#f38ba8; }
-    .sig-neutral { background:#2a2a3a; color:#cdd6f4; }
-    div[data-testid="stMetric"] { background:#1e1e2e; padding:0.6rem; border-radius:12px; }
-    h1 { font-size: 1.6rem !important; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+html, body, .stApp {{
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: {THEME['bg']}; color: {THEME['text']};
+}}
+h1, h2, h3 {{ font-family: 'Inter', sans-serif; letter-spacing: -0.01em; color: {THEME['text']}; }}
+.stCaption, [data-testid="stCaptionContainer"] {{ color: {THEME['text_muted']}; }}
+
+/* Touch-friendly + compacto pra celular */
+.block-container {{ padding-top: 1rem; padding-bottom: 3rem; max-width: 640px; }}
+.stButton button {{ height: 3rem; font-size: 1.05rem; border-radius: 12px; font-weight: 600; border: 1px solid {THEME['border']}; }}
+.stButton button[kind="primary"] {{ background: {THEME['accent']}; border-color: {THEME['accent']}; }}
+
+/* Header compacto */
+.ls-header {{
+    display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap;
+    padding: 0.2rem 0 0.7rem 0; border-bottom: 1px solid {THEME['border']}; margin-bottom: 0.6rem;
+}}
+.ls-header .ls-logo {{ font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }}
+.ls-header .ls-logo .dot {{ color: {THEME['accent']}; }}
+.ls-header .ls-tag {{ font-size: 0.78rem; color: {THEME['text_muted']}; }}
+
+.signal-box {{
+    padding: 1rem 1.1rem; border-radius: 16px; font-weight: 700;
+    font-size: 1.2rem; text-align: center; margin: 0.4rem 0 0.9rem 0;
+    border: 1px solid {THEME['border']}; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}}
+.sig-long    {{ background: linear-gradient(135deg, #16241d, {THEME['surface']}); color: {THEME['pos']}; border-color: rgba(52,211,153,0.35); }}
+.sig-short   {{ background: linear-gradient(135deg, #26161a, {THEME['surface']}); color: {THEME['neg']}; border-color: rgba(248,113,113,0.35); }}
+.sig-neutral {{ background: linear-gradient(135deg, {THEME['surface_2']}, {THEME['surface']}); color: {THEME['text']}; border-color: {THEME['border']}; }}
+
+div[data-testid="stMetric"] {{
+    background: {THEME['surface']}; padding: 0.7rem 0.8rem; border-radius: 12px;
+    border: 1px solid {THEME['border']};
+}}
+div[data-testid="stMetric"] label {{ color: {THEME['text_muted']} !important; }}
+div[data-testid="stMetricValue"] {{ font-variant-numeric: tabular-nums; }}
+
+.stTabs [data-baseweb="tab"] {{ color: {THEME['text_muted']}; font-weight: 500; }}
+.stTabs [aria-selected="true"] {{ color: {THEME['text']}; border-bottom: 2px solid {THEME['accent']}; }}
+
+h1 {{ font-size: 1.5rem !important; font-weight: 700; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -124,7 +170,13 @@ Responda em 4 blocos curtos:
 
 
 # ─── UI ───────────────────────────────────────────────────────────────────────
-st.title("📱 Long / Short")
+st.markdown(
+    """<div class="ls-header">
+    <span class="ls-logo">LS<span class="dot"> Mobile</span></span>
+    <span class="ls-tag">Pairs trading · Z-Score</span>
+    </div>""",
+    unsafe_allow_html=True,
+)
 
 with st.expander("⚙️ Configurações", expanded=not st.session_state.get("m_ran")):
     c1, c2 = st.columns(2)
@@ -234,79 +286,88 @@ label, cls, hint = classify_signal(z_now, dz_now, corr_now, cfg, zero_cross)
 st.markdown(f'<div class="signal-box {cls}">⚡ {label}<br><span style="font-size:0.85rem;font-weight:400">{hint}</span></div>',
             unsafe_allow_html=True)
 
-# Métricas em 2 colunas (cabe no celular)
-m1, m2 = st.columns(2)
-m1.metric(ratio_lbl, f"{ratio_series.iloc[-1]:.4f}")
-m2.metric("Z-Score", f"{z_now:.3f}")
-m3, m4 = st.columns(2)
-m3.metric("Δz (1 pregão)", f"{dz_now:+.3f}")
-m4.metric(f"Corr {corr_win}p", f"{corr_now:.3f}", delta="OK" if corr_now >= corr_min else "Baixa")
-m5, m6 = st.columns(2)
-m5.metric("Coint. p", f"{coint_p:.3f}", delta="OK" if coint_p < 0.05 else "Fraco")
-m6.metric("ADF p", f"{adf_p:.3f}", delta="OK" if adf_p < 0.05 else "Fraco")
+# KPIs agrupados — Preço & Sinal
+with st.container(border=True):
+    st.markdown("**Preço & Sinal**")
+    m1, m2 = st.columns(2)
+    m1.metric(ratio_lbl, f"{ratio_series.iloc[-1]:.4f}")
+    m2.metric("Z-Score", f"{z_now:.3f}")
+    m3, m4 = st.columns(2)
+    m3.metric("Δz (1 pregão)", f"{dz_now:+.3f}")
+    m4.metric(f"Corr {corr_win}p", f"{corr_now:.3f}", delta="OK" if corr_now >= corr_min else "Baixa")
+
+# KPIs agrupados — Qualidade estatística
+with st.container(border=True):
+    st.markdown("**Qualidade estatística**")
+    m5, m6 = st.columns(2)
+    m5.metric("Coint. p", f"{coint_p:.3f}", delta="OK" if coint_p < 0.05 else "Fraco")
+    m6.metric("ADF p", f"{adf_p:.3f}", delta="OK" if adf_p < 0.05 else "Fraco")
 
 st.divider()
 
-# ─── Gráficos empilhados (mobile) ─────────────────────────────────────────────
-fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
+tab_graf, tab_ia = st.tabs(["📈 Gráfico", "🤖 IA"])
+
+with tab_graf:
+    # ─── Gráficos empilhados (mobile) ─────────────────────────────────────────
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
                     row_heights=[0.36, 0.34, 0.30],
                     subplot_titles=["Preços (base 100)", ratio_lbl, f"Z-Score ({mean_win}p/{vol_win}p)"],
                     vertical_spacing=0.08)
 
-long_norm = long_data / long_data.iloc[0] * 100
-short_norm = short_data / short_data.iloc[0] * 100
-fig.add_trace(go.Scatter(x=long_norm.index, y=long_norm, name=long_ticker,
-                         line=dict(color="#a6e3a1", width=1.6)), row=1, col=1)
-fig.add_trace(go.Scatter(x=short_norm.index, y=short_norm, name=short_ticker,
-                         line=dict(color="#f38ba8", width=1.6)), row=1, col=1)
+    long_norm = long_data / long_data.iloc[0] * 100
+    short_norm = short_data / short_data.iloc[0] * 100
+    fig.add_trace(go.Scatter(x=long_norm.index, y=long_norm, name=long_ticker,
+                             line=dict(color=THEME["pos"], width=1.6)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=short_norm.index, y=short_norm, name=short_ticker,
+                             line=dict(color=THEME["neg"], width=1.6)), row=1, col=1)
 
-roll_mean = ratio_series.rolling(mean_win).mean()
-roll_std = ratio_series.rolling(vol_win).std()
-fig.add_trace(go.Scatter(x=ratio_series.index, y=ratio_series, name=ratio_lbl,
-                         line=dict(color="#cba6f7", width=1.6)), row=2, col=1)
-fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean, name="Média",
-                         line=dict(color="gray", width=1, dash="dash")), row=2, col=1)
-fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean + z_alert * roll_std, name="alerta",
-                         line=dict(color="#f38ba8", width=1, dash="dot")), row=2, col=1)
-fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean - z_alert * roll_std, name="alerta",
-                         line=dict(color="#89dceb", width=1, dash="dot")), row=2, col=1)
+    roll_mean = ratio_series.rolling(mean_win).mean()
+    roll_std = ratio_series.rolling(vol_win).std()
+    fig.add_trace(go.Scatter(x=ratio_series.index, y=ratio_series, name=ratio_lbl,
+                             line=dict(color=THEME["accent"], width=1.6)), row=2, col=1)
+    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean, name="Média",
+                             line=dict(color=THEME["text_muted"], width=1, dash="dash")), row=2, col=1)
+    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean + z_alert * roll_std, name="alerta",
+                             line=dict(color=THEME["neg"], width=1, dash="dot")), row=2, col=1)
+    fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean - z_alert * roll_std, name="alerta",
+                             line=dict(color=THEME["accent"], width=1, dash="dot")), row=2, col=1)
 
-colors_z = ["#f38ba8" if v >= z_alert else "#fab387" if v >= z_monitor else
-            "#89dceb" if v <= -z_alert else "#a6e3a1" if v <= -z_monitor else "#cdd6f4"
-            for v in z_series.fillna(0)]
-fig.add_trace(go.Bar(x=z_series.index, y=z_series, name="Z", marker_color=colors_z,
-                     opacity=0.85), row=3, col=1)
-for level, dash in [(z_alert, "solid"), (-z_alert, "solid"), (z_monitor, "dot"),
-                    (-z_monitor, "dot"), (z_exit, "dash"), (-z_exit, "dash")]:
-    fig.add_hline(y=level, line_dash=dash, line_color="gray", opacity=0.5, row=3, col=1)
-fig.add_hline(y=0, line_color="white", opacity=0.3, row=3, col=1)
+    colors_z = [THEME["neg"] if v >= z_alert else THEME["warn"] if v >= z_monitor else
+                THEME["accent"] if v <= -z_alert else THEME["pos"] if v <= -z_monitor else THEME["text_muted"]
+                for v in z_series.fillna(0)]
+    fig.add_trace(go.Bar(x=z_series.index, y=z_series, name="Z", marker_color=colors_z,
+                         opacity=0.85), row=3, col=1)
+    for level, dash in [(z_alert, "solid"), (-z_alert, "solid"), (z_monitor, "dot"),
+                        (-z_monitor, "dot"), (z_exit, "dash"), (-z_exit, "dash")]:
+        fig.add_hline(y=level, line_dash=dash, line_color=THEME["text_muted"], opacity=0.5, row=3, col=1)
+    fig.add_hline(y=0, line_color=THEME["text"], opacity=0.3, row=3, col=1)
 
-fig.update_layout(height=620, paper_bgcolor="#1e1e2e", plot_bgcolor="#1e1e2e",
-                  font=dict(color="#cdd6f4", size=11),
-                  legend=dict(orientation="h", y=-0.08, bgcolor="rgba(0,0,0,0)"),
-                  margin=dict(l=0, r=0, t=30, b=0))
-fig.update_xaxes(gridcolor="#313244")
-fig.update_yaxes(gridcolor="#313244")
-st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    fig.update_layout(height=620, paper_bgcolor=THEME["surface"], plot_bgcolor=THEME["surface"],
+                      font=dict(color=THEME["text"], size=11, family="Inter"),
+                      legend=dict(orientation="h", y=-0.08, bgcolor="rgba(0,0,0,0)"),
+                      margin=dict(l=0, r=0, t=30, b=0))
+    fig.update_xaxes(gridcolor=THEME["grid"])
+    fig.update_yaxes(gridcolor=THEME["grid"])
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-# ─── Análise Claude ───────────────────────────────────────────────────────────
-st.divider()
-st.subheader("🤖 Análise Claude")
-if not api_key:
-    st.caption("Adicione sua Anthropic API Key nas Configurações para ativar.")
-else:
-    akey = f"m_analysis_{long_ticker}_{short_ticker}"
-    if st.button("🧠 Gerar análise", use_container_width=True):
-        with st.spinner("Claude analisando…"):
-            try:
-                st.session_state[akey] = analyze_with_claude(
-                    api_key, long_ticker, short_ticker, ratio_series, z_series,
-                    coint_p, adf_p, hedge, corr_now, mean_win, dz_now, cfg, use_log, label)
-            except anthropic.AuthenticationError:
-                st.error("API Key inválida.")
-            except Exception as e:
-                st.error(f"Erro: {e}")
-    if akey in st.session_state:
-        st.markdown(st.session_state[akey])
+with tab_ia:
+    # ─── Análise Claude ───────────────────────────────────────────────────────
+    st.subheader("🤖 Análise Claude")
+    if not api_key:
+        st.caption("Adicione sua Anthropic API Key nas Configurações para ativar.")
+    else:
+        akey = f"m_analysis_{long_ticker}_{short_ticker}"
+        if st.button("🧠 Gerar análise", use_container_width=True):
+            with st.spinner("Claude analisando…"):
+                try:
+                    st.session_state[akey] = analyze_with_claude(
+                        api_key, long_ticker, short_ticker, ratio_series, z_series,
+                        coint_p, adf_p, hedge, corr_now, mean_win, dz_now, cfg, use_log, label)
+                except anthropic.AuthenticationError:
+                    st.error("API Key inválida.")
+                except Exception as e:
+                    st.error(f"Erro: {e}")
+        if akey in st.session_state:
+            st.markdown(st.session_state[akey])
 
 st.caption(f"Yahoo Finance · {datetime.now().strftime('%d/%m/%Y %H:%M')}")
