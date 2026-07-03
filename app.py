@@ -156,7 +156,7 @@ def metric_card(label, value, sub="", tone="neutral"):
         f'</div>'
     )
 
-def style_fig(fig, height, top_margin=60, show_legend=True):
+def style_fig(fig, height, top_margin=60, show_legend=True, legend_y=1.02):
     """Layout Plotly consistente com o tema (camada visual apenas)."""
     fig.update_layout(
         height=height,
@@ -165,7 +165,7 @@ def style_fig(fig, height, top_margin=60, show_legend=True):
         font=dict(color=C_TEXT, size=12),
         hovermode="x unified",
         hoverlabel=dict(bgcolor="#181825", bordercolor=C_SURF, font=dict(color=C_TEXT, size=12)),
-        legend=dict(orientation="h", yanchor="bottom", y=1.005, x=0,
+        legend=dict(orientation="h", yanchor="bottom", y=legend_y, x=0,
                     bgcolor="rgba(0,0,0,0)", font=dict(size=12)),
         showlegend=show_legend,
         margin=dict(l=0, r=0, t=top_margin, b=0),
@@ -493,7 +493,7 @@ if mode == "📈 Long / Short":
             line=dict(color=C_YELLOW, width=2), fill="tozeroy", fillcolor="rgba(249,226,175,0.08)"), row=4, col=1)
         fig.add_hline(y=corr_min, line_dash="dot", line_color=C_LONG, opacity=0.6, row=4, col=1)
 
-        style_fig(fig, height=780, top_margin=70)
+        style_fig(fig, height=800, top_margin=95, legend_y=1.05)
         fig.update_annotations(font=dict(size=13, color=C_MUTED))
         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
