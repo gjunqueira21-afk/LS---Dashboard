@@ -33,7 +33,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-default_api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+def get_secret(key, default=""):
+    """Lê um secret com segurança — não quebra o app se não houver secrets.toml."""
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+default_api_key = get_secret("ANTHROPIC_API_KEY", "")
 
 
 # ─── Lógica (cópias puras, independente do app desktop) ───────────────────────

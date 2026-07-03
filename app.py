@@ -177,8 +177,15 @@ def style_fig(fig, height, top_margin=60, show_legend=True):
 
 PLOTLY_CONFIG = {"displayModeBar": False}
 
-default_api_key   = st.secrets.get("ANTHROPIC_API_KEY", "")
-default_brapi_key = st.secrets.get("BRAPI_TOKEN", "")
+def get_secret(key, default=""):
+    """Lê um secret com segurança — não quebra o app se não houver secrets.toml."""
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+default_api_key   = get_secret("ANTHROPIC_API_KEY", "")
+default_brapi_key = get_secret("BRAPI_TOKEN", "")
 
 with st.sidebar:
     st.title("⚙️ Configurações")
