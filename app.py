@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from statsmodels.tsa.stattools import coint, adfuller
 import anthropic
-import requests
 import time
 from datetime import datetime
 
@@ -177,12 +176,18 @@ def style_fig(fig, height, top_margin=60, show_legend=True):
 
 PLOTLY_CONFIG = {"displayModeBar": False}
 
-default_api_key   = st.secrets.get("ANTHROPIC_API_KEY", "")
-default_brapi_key = st.secrets.get("BRAPI_TOKEN", "")
+def get_secret(key, default=""):
+    """Lê um secret com segurança — não quebra o app se não houver secrets.toml."""
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+default_api_key   = get_secret("ANTHROPIC_API_KEY", "")
 
 with st.sidebar:
     st.title("⚙️ Configurações")
-    mode = st.radio("Painel", ["📈 Long / Short", "🏦 Fundamentos"], label_visibility="collapsed")
+    mode = "📈 Long / Short"
     st.divider()
 
     if mode == "📈 Long / Short":
@@ -225,29 +230,6 @@ with st.sidebar:
 
         with st.expander("🔑 API", expanded=False):
             api_key = st.text_input("Anthropic API Key", value=default_api_key, type="password", placeholder="sk-ant-...")
-
-    else:
-        brapi_key = st.text_input("brapi.dev Token", value=default_brapi_key, type="password", placeholder="token (opcional)")
-        st.divider()
-        st.subheader("Empresas")
-        PRESETS_FUND = {
-            "Varejo BR":       "MGLU3\nAMER3\nVIVA3\nALLD3\nRENNER3",
-            "Bancos BR":       "ITUB4\nBBDC4\nBBAS3\nSANB11\nBRAY3",
-            "Petro & Energia": "PETR4\nVALE3\nPRIO3\nRRPH3\nGBIO3",
-            "Real Estate":     "CYRE3\nMRVE3\nEZTC3\nDIRR3\nTRIS3",
-            "Custom":          "",
-        }
-        fund_preset = st.selectbox("Grupo pré-definido", list(PRESETS_FUND.keys()))
-        default_tickers = PRESETS_FUND[fund_preset]
-        fund_tickers_raw = st.text_area(
-            "Tickers (um por linha, sem .SA)",
-            value=default_tickers,
-            height=160,
-            help="Ex: PETR4, VALE3, ITUB4"
-        )
-        load_btn = st.button("🔍 Carregar Fundamentos", use_container_width=True, type="primary")
-        st.divider()
-        st.caption("Dados: brapi.dev (B3 — dados confiáveis)")
 
 @st.cache_data(ttl=30)
 def fetch(ticker, period, interval):
@@ -341,87 +323,6 @@ Estruture sua resposta em:
     with client.messages.stream(model="claude-sonnet-4-6", max_tokens=1200,
                                  messages=[{"role": "user", "content": prompt}]) as stream:
         return stream.get_final_text()
-
-@st.cache_data(ttl=300)
-def fetch_brapi(ticker: str, token: str) -> dict:
-    t = ticker.upper().replace(".SA", "").strip()
-    url = f"https://brapi.dev/api/quote/{t}"
-    params = {"modules": "defaultKeyStatistics,financialData,summaryProfile"}
-    headers = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-        params["token"] = token
-    try:
-        r = requests.get(url, params=params, headers=headers, timeout=15)
-        data = r.json()
-        if "results" in data and data["results"]:
-            return data["results"][0]
-        return {"_error": data.get("message") or data.get("error") or f"HTTP {r.status_code}: {r.text[:200]}"}
-    except Exception as e:
-        return {"_error": str(e)}
-
-def safe_pct(val, decimals=2):
-    if val is None or (isinstance(val, float) and np.isnan(val)):
-        return "—"
-    return f"{val:.{decimals}f}%"
-
-def safe_num(val, decimals=2):
-    if val is None or (isinstance(val, float) and np.isnan(val)):
-        return "—"
-    return f"{val:.{decimals}f}"
-
-def fmt_market_cap(val):
-    if val is None:
-        return "—"
-    b = val / 1e9
-    if b >= 1:
-        return f"R${b:.1f}B"
-    m = val / 1e6
-    return f"R${m:.0f}M"
-
-def parse_fundamentals(ticker: str, token: str) -> dict:
-    info = fetch_brapi(ticker, token)
-    if not info or "_error" in info:
-        return {"_error": (info or {}).get("_error", "sem resposta"), "Ticker": ticker}
-
-    ks = info.get("defaultKeyStatistics") or {}
-    fd = info.get("financialData") or {}
-    sp = info.get("summaryProfile") or {}
-
-    div_yield_raw = ks.get("dividendYield") or info.get("dividendYield")
-    if div_yield_raw is not None and div_yield_raw > 1:
-        div_yield = div_yield_raw
-    elif div_yield_raw is not None:
-        div_yield = div_yield_raw * 100
-    else:
-        div_yield = None
-
-    dte_raw = fd.get("debtToEquity") or ks.get("debtToEquity")
-
-    def to_pct(v):
-        if v is None: return None
-        return v * 100
-
-    return {
-        "Ticker":         ticker.upper().replace(".SA", ""),
-        "Nome":           sp.get("longName") or ks.get("longName") or info.get("longName", ticker),
-        "Setor":          sp.get("sector") or info.get("sector", "—"),
-        "P/L":            ks.get("trailingPE") or info.get("trailingPE"),
-        "P/L Fwd":        ks.get("forwardPE")  or info.get("forwardPE"),
-        "P/VP":           ks.get("priceToBook") or info.get("priceToBook"),
-        "EV/EBITDA":      ks.get("enterpriseToEbitda") or info.get("enterpriseToEbitda"),
-        "ROE (%)":        to_pct(fd.get("returnOnEquity") or ks.get("returnOnEquity")),
-        "ROA (%)":        to_pct(fd.get("returnOnAssets") or ks.get("returnOnAssets")),
-        "Marg. Liq. (%)": to_pct(fd.get("profitMargins") or ks.get("profitMargins")),
-        "Marg. EBITDA (%)": to_pct(fd.get("ebitdaMargins") or ks.get("ebitdaMargins")),
-        "Div. Yield (%)": div_yield,
-        "Dív./PL":        dte_raw,
-        "Liq. Corrente":  fd.get("currentRatio"),
-        "Cresc. Receita (%)": to_pct(fd.get("revenueGrowth")),
-        "Cresc. Lucro (%)":   to_pct(fd.get("earningsGrowth") or ks.get("earningsGrowth")),
-        "Beta":           ks.get("beta") or info.get("beta"),
-        "Market Cap":     ks.get("marketCap") or info.get("marketCap"),
-    }
 
 if mode == "📈 Long / Short":
     # ---------- hero ----------
@@ -663,254 +564,3 @@ if mode == "📈 Long / Short":
         """)
 
     st.caption(f"Dados via Yahoo Finance · Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-
-
-else:
-    # ---------- hero ----------
-    st.markdown("""
-    <div class="ls-hero">
-        <div>
-            <h1>🏦 Fundamentos — Comparação de Empresas</h1>
-            <p>Dados via brapi.dev · Fonte: B3 / CVM</p>
-        </div>
-        <div class="ls-hero-pair">
-            <span class="chip chip-fund">📊 Análise Fundamentalista</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    if not load_btn:
-        st.markdown(
-            '<div class="empty-state">🏦 Selecione um grupo ou digite os tickers na barra lateral '
-            'e clique em <b>🔍 Carregar Fundamentos</b>.</div>',
-            unsafe_allow_html=True,
-        )
-        st.stop()
-
-    tickers = [t.strip().upper().replace(".SA", "") for t in fund_tickers_raw.splitlines() if t.strip()]
-    if not tickers:
-        st.error("Nenhum ticker informado.")
-        st.stop()
-
-    rows = []
-    errors = []
-    prog = st.progress(0, text="Buscando fundamentos…")
-    for i, t in enumerate(tickers):
-        prog.progress((i + 1) / len(tickers), text=f"Carregando {t}…")
-        row = parse_fundamentals(t, brapi_key)
-        if row and "_error" not in row:
-            rows.append(row)
-        else:
-            err_msg = (row or {}).get("_error", "erro desconhecido")
-            errors.append(f"{t} ({err_msg})")
-    prog.empty()
-
-    if errors:
-        st.warning("Não foi possível carregar:\n\n- " + "\n- ".join(errors))
-
-    if not rows:
-        st.error("Nenhum dado encontrado. Verifique os tickers e o token da brapi.dev.")
-        st.stop()
-
-    df = pd.DataFrame(rows)
-
-    # Cor categórica fixa por empresa (mesma cor em TODOS os gráficos)
-    COLORS = ["#cba6f7", "#a6e3a1", "#f38ba8", "#fab387", "#89dceb", "#f9e2af"]
-    company_colors = {t: COLORS[i % len(COLORS)] for i, t in enumerate(df["Ticker"].tolist())}
-
-    tab_table, tab_compare, tab_radar, tab_ind = st.tabs(
-        ["📋 Tabela", "📊 Comparação", "🕸️ Radar", "🔍 Individual"]
-    )
-
-    with tab_table:
-        st.markdown('<span class="fund-header">📋 Tabela Comparativa</span>', unsafe_allow_html=True)
-
-        DISPLAY_COLS = [
-            "Ticker", "Nome", "Setor",
-            "P/L", "P/L Fwd", "P/VP", "EV/EBITDA",
-            "ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)",
-            "Div. Yield (%)", "Dív./PL", "Liq. Corrente",
-            "Cresc. Receita (%)", "Cresc. Lucro (%)",
-            "Beta", "Market Cap",
-        ]
-
-        df_display = df[DISPLAY_COLS].copy()
-        pct_cols  = ["ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)", "Div. Yield (%)", "Cresc. Receita (%)", "Cresc. Lucro (%)"]
-        num_cols  = ["P/L", "P/L Fwd", "P/VP", "EV/EBITDA", "Dív./PL", "Liq. Corrente", "Beta"]
-
-        def fmt_cell(v, is_pct=False):
-            if v is None or (isinstance(v, float) and np.isnan(v)):
-                return "—"
-            if is_pct:
-                return f"{v:.2f}%"
-            return f"{v:.2f}"
-
-        for col in pct_cols:
-            if col in df_display.columns:
-                df_display[col] = df_display[col].apply(lambda x: fmt_cell(x, is_pct=True))
-        for col in num_cols:
-            if col in df_display.columns:
-                df_display[col] = df_display[col].apply(lambda x: fmt_cell(x))
-        df_display["Market Cap"] = df["Market Cap"].apply(fmt_market_cap)
-
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
-
-    with tab_compare:
-        st.markdown('<span class="fund-header">📊 Comparação Visual</span>', unsafe_allow_html=True)
-
-        CHART_METRICS = {
-            "P/L": ("P/L", False),
-            "P/VP": ("P/VP", False),
-            "ROE (%)": ("ROE (%)", True),
-            "Marg. Liq. (%)": ("Marg. Liq. (%)", True),
-            "Div. Yield (%)": ("Div. Yield (%)", True),
-            "EV/EBITDA": ("EV/EBITDA", False),
-            "Dív./PL": ("Dív./PL", False),
-            "Cresc. Receita (%)": ("Cresc. Receita (%)", True),
-        }
-
-        selected_metrics = st.multiselect(
-            "Métricas para comparar",
-            list(CHART_METRICS.keys()),
-            default=["ROE (%)", "Marg. Liq. (%)", "Div. Yield (%)", "P/L"],
-        )
-
-        if selected_metrics:
-            cols_per_row = 2
-            metric_chunks = [selected_metrics[i:i+cols_per_row] for i in range(0, len(selected_metrics), cols_per_row)]
-
-            for chunk in metric_chunks:
-                row_cols = st.columns(len(chunk))
-                for ci, metric in enumerate(chunk):
-                    col_name, _ = CHART_METRICS[metric]
-                    vals = df[col_name].tolist()
-                    labels = df["Ticker"].tolist()
-                    y = []
-                    x = []
-                    for label, v in zip(labels, vals):
-                        if v is not None and not (isinstance(v, float) and np.isnan(v)):
-                            y.append(float(v))
-                            x.append(label)
-                    if not y:
-                        continue
-                    bar_colors = [company_colors[label] for label in x]
-                    fig_bar = go.Figure(go.Bar(
-                        x=x, y=y,
-                        marker_color=bar_colors,
-                        text=[f"{v:.1f}" for v in y],
-                        textposition="outside",
-                        textfont=dict(size=12, color=C_TEXT),
-                    ))
-                    style_fig(fig_bar, height=320, top_margin=46, show_legend=False)
-                    fig_bar.update_layout(
-                        title=dict(text=metric, font=dict(size=14, color=C_TEXT)),
-                        hovermode="x",
-                    )
-                    with row_cols[ci]:
-                        st.plotly_chart(fig_bar, use_container_width=True, config=PLOTLY_CONFIG)
-
-    with tab_radar:
-        RADAR_METRICS = ["ROE (%)", "ROA (%)", "Marg. Liq. (%)", "Marg. EBITDA (%)", "Div. Yield (%)"]
-        radar_df = df[["Ticker"] + RADAR_METRICS].copy()
-
-        # Converte para numérico e substitui NaN pela mediana da coluna (evita empresas sumindo no centro)
-        for col in RADAR_METRICS:
-            radar_df[col] = pd.to_numeric(radar_df[col], errors="coerce")
-            median_val = radar_df[col].median()
-            radar_df[col] = radar_df[col].fillna(median_val if not np.isnan(median_val) else 0)
-
-        # Normaliza 0-100 via percentile rank (robusto a outliers — evita formas distorcidas)
-        for col in RADAR_METRICS:
-            if radar_df[col].nunique() > 1:
-                radar_df[col] = radar_df[col].rank(pct=True) * 100
-            else:
-                radar_df[col] = 50.0
-
-        st.markdown('<span class="fund-header">🕸️ Radar — Qualidade (ranking relativo)</span>', unsafe_allow_html=True)
-        st.caption("Posição relativa de cada empresa dentro do grupo (0 = pior, 100 = melhor). Dados ausentes preenchidos pela mediana.")
-        fig_radar = go.Figure()
-        for idx, row_ in radar_df.iterrows():
-            vals = [round(float(row_[m]), 1) for m in RADAR_METRICS]
-            fig_radar.add_trace(go.Scatterpolar(
-                r=vals + [vals[0]],
-                theta=RADAR_METRICS + [RADAR_METRICS[0]],
-                fill="toself",
-                name=row_["Ticker"],
-                line=dict(color=company_colors.get(row_["Ticker"], COLORS[idx % len(COLORS)]), width=2),
-                opacity=0.55,
-            ))
-        fig_radar.update_layout(
-            polar=dict(
-                bgcolor="rgba(49,50,68,0.35)",
-                radialaxis=dict(visible=True, range=[0, 100], color=C_MUTED, tickfont=dict(size=11)),
-                angularaxis=dict(color=C_TEXT, tickfont=dict(size=12)),
-            ),
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color=C_TEXT, size=12),
-            legend=dict(orientation="h", yanchor="bottom", y=-0.12, x=0,
-                        bgcolor="rgba(0,0,0,0)", font=dict(size=12)),
-            height=520,
-            margin=dict(l=60, r=60, t=30, b=60),
-        )
-        st.plotly_chart(fig_radar, use_container_width=True, config=PLOTLY_CONFIG)
-
-    with tab_ind:
-        st.markdown('<span class="fund-header">🔍 Visão Individual</span>', unsafe_allow_html=True)
-        selected_ticker = st.selectbox("Selecionar empresa", df["Ticker"].tolist())
-        row_ind = df[df["Ticker"] == selected_ticker].iloc[0]
-
-        col_a, col_b, col_c = st.columns(3)
-        with col_a:
-            st.markdown(f"**{row_ind['Nome']}**")
-            st.caption(f"Setor: {row_ind['Setor']}")
-            st.metric("Market Cap", fmt_market_cap(row_ind["Market Cap"]))
-            st.metric("Beta", safe_num(row_ind["Beta"]))
-        with col_b:
-            st.metric("P/L",      safe_num(row_ind["P/L"]))
-            st.metric("P/L Fwd",  safe_num(row_ind["P/L Fwd"]))
-            st.metric("P/VP",     safe_num(row_ind["P/VP"]))
-            st.metric("EV/EBITDA",safe_num(row_ind["EV/EBITDA"]))
-        with col_c:
-            st.metric("ROE",         safe_pct(row_ind["ROE (%)"]))
-            st.metric("ROA",         safe_pct(row_ind["ROA (%)"]))
-            st.metric("Marg. Líq.",  safe_pct(row_ind["Marg. Liq. (%)"]))
-            st.metric("Div. Yield",  safe_pct(row_ind["Div. Yield (%)"]))
-
-        col_d, col_e = st.columns(2)
-        with col_d:
-            st.metric("Dívida/PL",       safe_num(row_ind["Dív./PL"]))
-            st.metric("Liq. Corrente",   safe_num(row_ind["Liq. Corrente"]))
-        with col_e:
-            st.metric("Cresc. Receita",  safe_pct(row_ind["Cresc. Receita (%)"]))
-            st.metric("Cresc. Lucro",    safe_pct(row_ind["Cresc. Lucro (%)"]))
-
-    with st.expander("ℹ️ Manual de Métricas — Fundamentos"):
-        st.markdown("""
-**P/L (Preço/Lucro)** — Quantas vezes o lucro anual está embutido no preço. Menor é mais barato.
-
-**P/L Fwd** — Mesmo que P/L, mas usando a estimativa de lucro futuro.
-
-**P/VP (Preço/Valor Patrimonial)** — Quanto o mercado paga pelo patrimônio contábil. P/VP < 1 pode indicar desconto.
-
-**EV/EBITDA** — Valor da empresa (incluindo dívida) dividido pelo EBITDA. Menor = mais barato.
-
-**ROE (%)** — Retorno sobre o patrimônio líquido. Acima de 15% é considerado bom.
-
-**ROA (%)** — Retorno sobre ativos totais. Mais conservador que o ROE.
-
-**Margem Líquida (%)** — % da receita que vira lucro.
-
-**Margem EBITDA (%)** — % da receita que vira lucro operacional.
-
-**Div. Yield (%)** — Dividendos pagos no ano ÷ preço atual. Acima de 6% no Brasil é generoso.
-
-**Dívida/PL** — Alavancagem financeira. Acima de 2x indica alta alavancagem.
-
-**Liquidez Corrente** — Ativo circulante ÷ passivo circulante. Acima de 1.5 é saudável.
-
-**Cresc. Receita / Lucro (%)** — Crescimento período sobre período.
-
-**Beta** — Sensibilidade ao mercado. Beta < 1 = mais defensivo.
-        """)
-
-    st.caption(f"Dados via brapi.dev · Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
