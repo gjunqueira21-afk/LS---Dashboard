@@ -24,16 +24,29 @@ em cada versão).
 Um único spread para sinal, teste estatístico, gráfico e dimensionamento:
 
 ```
-spread = ln(LONG) - ln(SHORT)        # beta = 1 IMPOSTO, notional-neutro
-z      = (spread - média) / desvio
+spread = ln(LONG) - ln(SHORT)        # beta = 1 IMPOSTO, notional-neutro (50/50)
+z      = (spread - mm63) / sd63
+d|z|   = |z_t| - |z_t-1|             # variação do MÓDULO, gate UNILATERAL
+corr   = corr(dln L, dln S) em 252d  # log-RETORNOS, nunca níveis de preço
 ADF    = adfuller(spread)            # válido: nada foi estimado da amostra
 coint  = coint(ln LONG, ln SHORT)    # Engle-Granger, valores críticos corretos
-corr   = correlação de LOG-RETORNOS  # nunca de níveis de preço
+entrada: |z| >= z_in AND d|z| >= 0,05 AND corr >= 0,75
+saída:   |z| <= 0,40 OU 63 pregões   # sem stop, sem cruzamento de zero
 sizing = R$ igual em cada perna
 ```
 
+Isso é **conferido linha a linha** contra `run_jarvis_pair()` do
+`research_ls_b3` (família I) — a configuração levada ao teste cego de 2024+.
+Há um teste de paridade que reimplementa a referência e exige erro numérico
+zero em spread, z, d|z| e correlação.
+
 O beta OLS continua sendo calculado e exibido, mas é **informativo** — não entra
 no sinal, no teste nem no sizing.
+
+O gate de `d|z|` é **unilateral** de propósito: só passa quando `|z|` está
+crescendo, ou seja, quando o par está *esticando*. Usar `|Δz|` (módulo da
+variação, como fazia o painel antigo) aceitaria também um par revertendo —
+trade economicamente oposto ao que foi validado.
 
 ### Por que assim
 
@@ -104,11 +117,14 @@ o seletor de período é instantâneo e não toca a rede.
 
 ## Limitações conhecidas
 
-- **Δz usa o módulo.** "Esticando" e "revertendo" — dois trades economicamente
-  opostos — caem no mesmo rótulo. A direção é exibida, mas não separa o sinal.
-  Separar exigiria saber qual das duas semânticas o backtest validou.
 - **Sem livro de posições.** O painel não sabe se você tem posição aberta além
   do checkbox manual; `max_hold` não é comparado a uma data de entrada.
+- **Sem regra de exclusão por perdas.** O backtest bloqueia um par após 3
+  trades com PnL líquido negativo consecutivos e só reabilita com 2
+  convergências virtuais. Exige histórico de trades por par.
+- **Sem elegibilidade point-in-time.** O backtest exige ADTV de 60 dias
+  >= R$ 1M nas duas pernas no dia do sinal, com slippage em tiers
+  (10/20/40 bps por faixa de ADTV). Aqui o custo é um parâmetro único.
 - **Sem backtest embutido.** Convergência do z não é evidência de reversão: num
   passeio aleatório a regra converge em ~90% dos casos com ~68% de trades
   vencedores e expectância negativa. Só um backtest com PnL líquido e t-stat

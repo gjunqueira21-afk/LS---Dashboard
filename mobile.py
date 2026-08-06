@@ -98,13 +98,13 @@ with st.expander("Avançado — janelas e gatilhos"):
     st.caption("Monitorar")
     m1, m2, m3 = st.columns(3)
     z_monitor = m1.number_input("|z|>=", 0.1, 3.0, SETUP_VALIDADO["z_monitor"], 0.05)
-    dz_monitor = m2.number_input("dz>=", 0.0, 0.5, SETUP_VALIDADO["dz_monitor"], 0.01)
+    dz_monitor = m2.number_input("d|z|>=", 0.0, 0.5, SETUP_VALIDADO["dz_monitor"], 0.01)
     corr_min = m3.number_input("corr>=", 0.0, 1.0, SETUP_VALIDADO["corr_min"], 0.05)
 
     st.caption("Alerta máximo")
     a1, a2 = st.columns(2)
     z_alert = a1.number_input("|z|>= ", 0.1, 3.0, SETUP_VALIDADO["z_alert"], 0.05)
-    dz_alert = a2.number_input("dz>= ", 0.0, 0.5, SETUP_VALIDADO["dz_alert"], 0.01)
+    dz_alert = a2.number_input("d|z|>= ", 0.0, 0.5, SETUP_VALIDADO["dz_alert"], 0.01)
 
     s1, s2 = st.columns(2)
     z_exit = s1.number_input("Saída |z|<=", 0.0, 1.0, SETUP_VALIDADO["z_exit"], 0.05)
@@ -213,7 +213,7 @@ m1, m2 = st.columns(2)
 m1.markdown(metric_card("Z-Score", f"{ps.z_now:+.3f}", "", z_tone(ps.z_now, cfg)),
             unsafe_allow_html=True)
 mom = {True: "esticando", False: "revertendo", None: "parado"}[sig.esticando]
-m2.markdown(metric_card("Delta z · 1 pregão", f"{ps.dz_now:+.3f}",
+m2.markdown(metric_card("d|z| · 1 pregão", f"{ps.dz_now:+.3f}",
                         f"{mom} · ruído {ps.dz_noise:.3f}", "accent"),
             unsafe_allow_html=True)
 

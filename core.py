@@ -36,11 +36,19 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import adfuller, coint
 
-# Setup validado no backtest do research_ls_b3. Alterar isto e alterar a
+# Setup validado no backtest do research_ls_b3, familia I (run_family_I.py),
+# que foi a config levada ao teste cego 2024+. Alterar isto e alterar a
 # estrategia, nao a apresentacao.
+#
+# Conferido linha a linha contra run_jarvis_pair():
+#   s    = ln(L) - ln(S)                      -> beta = 1 imposto (50/50 dollar-neutral)
+#   z    = (s - mm63) / sd63
+#   corr = corr(dln L, dln S) em 252d >= 0.75 -> JA era sobre log-retornos
+#   dz   = |z_t| - |z_{t-1}| >= 0.05          -> variacao do MODULO, gate UNILATERAL
+#   saida: |z| <= 0.40 OU 63 pregoes          -> sem stop, sem cruzamento de zero
 SETUP_VALIDADO = {
     "mean_win": 63, "vol_win": 63, "corr_win": 252,
-    "z_monitor": 1.10, "dz_monitor": 0.05, "corr_min": 0.60,
+    "z_monitor": 1.10, "dz_monitor": 0.05, "corr_min": 0.75,
     "z_alert": 1.50, "dz_alert": 0.15,
     "z_exit": 0.40, "max_hold": 63,
 }
@@ -81,8 +89,12 @@ def rolling_corr(frame: pd.DataFrame, window: int, basis: str = "returns") -> pd
 
     Correlacao entre series I(1) ("niveis") e espuria — mede tendencia comum.
     O modo "levels" existe so para comparacao com o comportamento antigo.
+
+    NAO usar .dropna() antes do rolling: a pesquisa faz
+    `pd.Series(la).diff().rolling(252).corr(...)`, mantendo o indice alinhado
+    ao de precos. Um dropna aqui desloca a serie em 1 pregao.
     """
-    df = np.log(frame).diff().dropna() if basis == "returns" else frame
+    df = np.log(frame).diff() if basis == "returns" else frame
     return df["long"].rolling(window).corr(df["short"])
 
 
@@ -201,14 +213,14 @@ def z_frequency(z: pd.Series, threshold: float) -> float:
 
 
 def dz_background(z: pd.Series, window: int = 252) -> float:
-    """|Δz| mediano de fundo — o ruido do proprio estimador.
+    """Magnitude tipica de Δ|z| — o ruido do proprio estimador.
 
-    Δz mistura o movimento de hoje com o efeito da janela DESCARTANDO a
+    Δ|z| mistura o movimento de hoje com o efeito da janela DESCARTANDO a
     observacao de N dias atras (roll-off). Com preco parado, o roll-off sozinho
-    gera |Δz| mediano ~0,027 e cruza o gatilho de 0,05 em ~24% dos dias. Um
-    limiar abaixo deste numero e ruido, nao momentum.
+    gera |Δ|z|| mediano da ordem de 0,03 e cruza o gatilho de 0,05 numa fracao
+    relevante dos dias. Um limiar abaixo deste numero e ruido, nao momentum.
     """
-    d = z.diff().abs().dropna()
+    d = z.abs().diff().abs().dropna()
     if len(d) < 20:
         return float("nan")
     return float(d.tail(window).median())
@@ -281,11 +293,16 @@ def compute_pair(frame: pd.DataFrame, mean_win: int, vol_win: int,
 
     z_now = float(z_clean.iloc[-1])
     z_prev = float(z_clean.iloc[-2]) if len(z_clean) > 1 else z_now
-    dz_now = z_now - z_prev
 
-    # Cruzamento do zero so conta como SAIDA se veio de dentro da banda.
-    # Um gap de -1,6 para +1,6 (evento, leilao) trocava de sinal e o painel
-    # antigo imprimia "CONVERGENCIA -> encerrar" no maior alerta da amostra.
+    # dz = variacao do MODULO de z, nao modulo da variacao.
+    #   pesquisa: dz = np.abs(z) - np.abs(np.roll(z, 1)); gate `dz >= DZ_MIN`
+    # Positivo = o par esta ESTICANDO (|z| crescendo). O gate e unilateral, o
+    # que resolve a ambiguidade "esticando vs revertendo": a semantica validada
+    # e esticando. O painel antigo usava |z_t - z_{t-1}|, que aceitava os dois.
+    dz_now = abs(z_now) - abs(z_prev)
+
+    # O backtest NAO tem saida por cruzamento do zero (so |z| <= z_exit ou
+    # max_hold). Mantido apenas como informacao de tela.
     zero_cross = (np.sign(z_now) != np.sign(z_prev)) and (abs(z_prev) <= 1.10)
 
     gap = 0
@@ -355,21 +372,24 @@ class Signal:
 def classify(st_: PairStats, cfg: dict, tem_posicao: bool = False) -> Signal:
     """Classifica o sinal E devolve a tríade de check por gatilho.
 
-    A mudanca de comportamento em relacao ao painel antigo e so uma: o rotulo
-    NEUTRO agora vem acompanhado de qual condicao falhou. Antes, um par em
-    z=2,4 com Δz=0,02 num dia parado exibia "⚪ NEUTRO · Fora dos gatilhos" e o
-    usuario via um |z| gritante sem saber que foi o Δz que barrou.
+    Fiel ao run_jarvis_pair() da familia I: entrada exige
+    `|z| >= z_in AND dz >= dz_min AND corr >= corr_min`, com
+    dz = |z_t| - |z_{t-1}| e gate UNILATERAL. Saida: |z| <= z_exit ou max_hold.
 
-    Nota sobre Δz: o gatilho usa |Δz|, entao "esticando" (Δz na mesma direcao
-    do z) e "revertendo" (direcao contraria) — dois trades economicamente
-    opostos — entram no mesmo rotulo. Isso preserva o comportamento validado no
-    backtest; a direcao e exposta em `Signal.esticando` para voce ver, e a
-    decisao de separar os dois fica registrada como pendente.
+    O gate de dz ser unilateral e o ponto: ele so passa quando o par esta
+    ESTICANDO (|z| crescendo). O painel antigo usava |z_t - z_{t-1}|, que
+    tambem aceitava um par revertendo — trade economicamente oposto ao que o
+    backtest validou.
+
+    A adicao em relacao ao backtest e de apresentacao: o rotulo NEUTRO vem
+    acompanhado de qual condicao falhou. Antes, um par em z=2,4 com dz=0,02
+    num dia parado exibia "NEUTRO · fora dos gatilhos" e o usuario via um |z|
+    gritante sem saber que foi o dz que barrou.
     """
     z, dz = st_.z_now, st_.dz_now
     corr = st_.corr_now
-    az, adz = abs(z), abs(dz)
-    esticando = bool(np.sign(dz) == np.sign(z)) if dz != 0 else None
+    az = abs(z)
+    esticando = None if dz == 0 else bool(dz > 0)
 
     side = "short_ratio" if z > 0 else "long_ratio"
     corr_ok = (corr is not None) and (corr >= cfg["corr_min"])
@@ -377,18 +397,17 @@ def classify(st_: PairStats, cfg: dict, tem_posicao: bool = False) -> Signal:
 
     def gates(zt: float, dzt: float) -> list:
         return [
-            Gate("|z|", f"{az:.2f}", f"≥ {zt:.2f}", az >= zt),
-            Gate("Δz", f"{adz:.3f}", f"≥ {dzt:.3f}", adz >= dzt),
-            Gate("corr", corr_txt, f"≥ {cfg['corr_min']:.2f}", corr_ok),
+            Gate("|z|", f"{az:.2f}", f">= {zt:.2f}", az >= zt),
+            Gate("d|z|", f"{dz:+.3f}", f">= {dzt:.3f}", dz >= dzt),
+            Gate("corr", corr_txt, f">= {cfg['corr_min']:.2f}", corr_ok),
         ]
 
     g_alert = gates(cfg["z_alert"], cfg["dz_alert"])
     g_watch = gates(cfg["z_monitor"], cfg["dz_monitor"])
 
-    # Zona de saida tem prioridade — mas so e "encerrar" se houver posicao.
-    if az <= cfg["z_exit"] or st_.zero_cross:
-        motivo = "cruzou o zero" if st_.zero_cross and az > cfg["z_exit"] \
-            else f"|z| = {az:.2f} ≤ {cfg['z_exit']:.2f}"
+    # Saida do backtest: |z| <= z_exit ou max_hold. Sem cruzamento de zero.
+    if az <= cfg["z_exit"]:
+        motivo = f"|z| = {az:.2f} <= {cfg['z_exit']:.2f}"
         if tem_posicao:
             return Signal("exit", "", "CONVERGÊNCIA · encerrar / realizar",
                           f"Zona de saída ({motivo})", g_watch, esticando)

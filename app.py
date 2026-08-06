@@ -115,13 +115,13 @@ with st.sidebar:
     with st.expander("Gatilhos de sinal", expanded=False):
         st.caption("Monitorar")
         z_monitor = st.slider("|z| >=", 0.5, 3.0, SETUP_VALIDADO["z_monitor"], 0.05)
-        dz_monitor = st.slider("dz (1 pregão) >=", 0.0, 0.5,
+        dz_monitor = st.slider("d|z| (1 pregão) >=", 0.0, 0.5,
                                SETUP_VALIDADO["dz_monitor"], 0.01)
         corr_min = st.slider("Correlação >=", 0.0, 1.0,
                              SETUP_VALIDADO["corr_min"], 0.05)
         st.caption("Alerta máximo")
         z_alert = st.slider("|z| >= ", 0.5, 3.0, SETUP_VALIDADO["z_alert"], 0.05)
-        dz_alert = st.slider("dz (1 pregão) >= ", 0.0, 0.5,
+        dz_alert = st.slider("d|z| (1 pregão) >= ", 0.0, 0.5,
                              SETUP_VALIDADO["dz_alert"], 0.01)
 
     with st.expander("Saída / convergência", expanded=False):
@@ -288,7 +288,7 @@ r1[0].markdown(metric_card(
 
 mom = {True: "esticando", False: "revertendo", None: "parado"}[sig.esticando]
 r1[1].markdown(metric_card(
-    "Delta z · 1 pregão", f"{ps.dz_now:+.3f}",
+    "d|z| · 1 pregão", f"{ps.dz_now:+.3f}",
     f"{mom} · ruído de fundo {ps.dz_noise:.3f}", "accent"), unsafe_allow_html=True)
 
 if ps.hl is None:
@@ -424,7 +424,7 @@ with tab_e:
         st.markdown("**Estatísticas do spread canônico**")
         st.dataframe(pd.DataFrame({
             "Métrica": ["Spread atual", f"Média ({mean_win}p)", "sigma do spread",
-                        "Z-Score", "Delta z (1 pregão)", "Z máx", "Z mín",
+                        "Z-Score", "d|z| (1 pregão)", "Z máx", "Z mín",
                         "Meia-vida", "beta OLS em log (informativo)",
                         f"Correlação ({corr_win}p)", "Cointegração p",
                         "ADF do spread p", "Pregões usados"],
@@ -545,9 +545,12 @@ em cada perna. O beta OLS aparece na aba Estatísticas como número
 **Z-Score** — distância do spread em relação à média de {mean_win} pregões, em
 desvios de {vol_win} pregões. Coração da estratégia.
 
-**Delta z** — variação do z em 1 pregão. Confirma momentum. Atenção: ele
-mistura o movimento de hoje com o efeito da janela *descartando* a observação
-de {mean_win} pregões atrás. O card mostra o **ruído de fundo**
+**d|z|** — variação do **módulo** do z em 1 pregão: `|z_t| − |z_t-1|`. O gate é
+**unilateral** (`>= {dz_monitor:.2f}`), então só passa quando o par está
+*esticando*. Isso é fiel à família I do backtest — não é `|Δz|`, que aceitaria
+também um par revertendo, trade economicamente oposto. Atenção: d|z| mistura o
+movimento de hoje com o efeito da janela *descartando* a observação de
+{mean_win} pregões atrás. O card mostra o **ruído de fundo**
 ({ps.dz_noise:.3f} neste par) — um gatilho abaixo desse valor é ruído, não
 momentum.
 
@@ -557,10 +560,10 @@ fica preso*. Leia o **intervalo de confiança**, não o ponto: o estimador é
 enviesado para baixo em meias-vidas longas.
 
 **Correlação ({corr_win}p)** — sobre **log-retornos**, não sobre níveis de
-preço. Correlação entre séries de preço em nível é espúria: mede tendência
-comum. É por isso que o gatilho padrão aqui é
-{SETUP_VALIDADO['corr_min']:.2f} e não 0,75 — sobre retornos, 0,75 entre dois
-papéis do mesmo setor é raro.
+preço, exatamente como no backtest (`corr(dln L, dln S)`). Correlação entre
+séries de preço em nível é espúria: mede tendência comum. Medido em
+PETR4×VALE3: 0,77 em níveis contra −0,08 em retornos. O gatilho de
+{SETUP_VALIDADO['corr_min']:.2f} é restritivo de propósito.
 
 **Cointegração p** — Engle-Granger sobre log-preços, com os valores críticos
 corretos para o teste.
@@ -576,23 +579,29 @@ sair no zero a zero.
 ---
 ### Níveis de sinal
 
-- **Monitorar** — `|z| >= {z_monitor:.2f}` · `dz >= {dz_monitor:.2f}` ·
+- **Monitorar** — `|z| >= {z_monitor:.2f}` · `d|z| >= {dz_monitor:.2f}` ·
   `corr >= {corr_min:.2f}`
-- **Alerta máximo** — `|z| >= {z_alert:.2f}` · `dz >= {dz_alert:.2f}` ·
+- **Alerta máximo** — `|z| >= {z_alert:.2f}` · `d|z| >= {dz_alert:.2f}` ·
   `corr >= {corr_min:.2f}` + checklist
-- **Saída** — `|z| <= {z_exit:.2f}` ou cruzamento do zero vindo de dentro da
-  banda. Holding máximo: {max_hold} pregões.
+- **Saída** — `|z| <= {z_exit:.2f}` ou {max_hold} pregões de holding. Sem stop
+  e sem saída por cruzamento do zero — igual ao backtest.
 
 Quando o sinal é NEUTRO, a tríade de check no topo mostra **qual condição
 falhou** — não só que o conjunto não passou.
 
-### Limitação conhecida
+Conferido linha a linha contra `run_jarvis_pair()` do `research_ls_b3`
+(família I), que foi a configuração levada ao teste cego de 2024+.
 
-O gatilho de delta z usa o **módulo**. Isso significa que "esticando" (dz na
-mesma direção do z) e "revertendo" (direção contrária) — dois trades
-economicamente opostos — entram no mesmo rótulo. O painel mostra a direção no
-card de delta z para você ver, mas não separa os dois. Separar exigiria saber
-qual das duas semânticas o backtest validou.
+### O que o painel ainda não modela
+
+O backtest tem duas regras que este painel não implementa:
+
+1. **Exclusão por perdas** — 3 trades com PnL líquido negativo consecutivos no
+   mesmo par bloqueiam o par; a reabilitação exige 2 convergências virtuais
+   consecutivas. Isso exige histórico de trades por par.
+2. **Elegibilidade point-in-time** — ADTV de 60 dias >= R$ 1M nas duas pernas
+   no dia do sinal, com tiers de slippage por faixa de ADTV (10/20/40 bps).
+   Aqui o custo é um parâmetro único que você informa.
 
 > Rodar em produção sombra antes de execução real. Registrar cada sinal
 > emitido é a única amostra out-of-sample limpa que ainda pode existir.
