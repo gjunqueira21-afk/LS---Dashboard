@@ -85,19 +85,36 @@ with st.sidebar:
     run_btn = st.button("▶ Analisar", width="stretch", type="primary")
     st.divider()
 
+    # Posicao fica JUNTO do par, nao enterrada num expander: ela troca o texto
+    # do sinal principal entre "CONVERGÊNCIA · encerrar" e "SEM EDGE".
+    # Chave por par — senao o check vaza para um par que voce nao tem.
+    tem_posicao = st.checkbox(
+        "Tenho posição aberta neste par", value=False,
+        key=f"pos_{long_in.strip().upper()}_{short_in.strip().upper()}",
+        help="Sem posição, 'CONVERGÊNCIA -> encerrar' não faz sentido — o "
+             "painel mostra 'SEM EDGE' em vez disso.")
+    st.divider()
+
+    # Rotulos mostram o valor CORRENTE (via session_state), nao o validado:
+    # com 5 caixas fechadas que mudam o significado de tudo na tela, um rotulo
+    # que sempre diz "63/63/252" e pior que nenhum rotulo.
+    def _v(key, default):
+        return st.session_state.get(key, default)
+
     # --- janelas -------------------------------------------------------------
-    with st.expander(f"Janelas · {SETUP_VALIDADO['mean_win']}/"
-                     f"{SETUP_VALIDADO['vol_win']}/{SETUP_VALIDADO['corr_win']}",
+    with st.expander(f"Janelas · {_v('sb_mean', SETUP_VALIDADO['mean_win'])}/"
+                     f"{_v('sb_vol', SETUP_VALIDADO['vol_win'])}/"
+                     f"{_v('sb_corr', SETUP_VALIDADO['corr_win'])}",
                      expanded=False):
         mean_win = st.number_input("Média do spread (pregões)", 5, 504,
-                                   SETUP_VALIDADO["mean_win"])
+                                   SETUP_VALIDADO["mean_win"], key="sb_mean")
         vol_win = st.number_input("Volatilidade (pregões)", 5, 504,
-                                  SETUP_VALIDADO["vol_win"])
+                                  SETUP_VALIDADO["vol_win"], key="sb_vol")
         corr_win = st.number_input("Correlação (pregões)", 20, 504,
-                                   SETUP_VALIDADO["corr_win"])
+                                   SETUP_VALIDADO["corr_win"], key="sb_corr")
         corr_basis = st.radio(
             "Base da correlação",
-            ["returns", "levels"], index=0, horizontal=True,
+            ["returns", "levels"], index=0, horizontal=True, key="sb_basis",
             format_func=lambda x: "log-retornos (correto)" if x == "returns"
             else "níveis (legado)",
             help="Correlação entre séries de preço em nível é espúria — mede "
@@ -112,27 +129,29 @@ with st.sidebar:
             )
 
     # --- gatilhos ------------------------------------------------------------
-    with st.expander("Gatilhos de sinal", expanded=False):
+    with st.expander(f"Gatilhos · {_v('sb_zmon', SETUP_VALIDADO['z_monitor']):.2f}"
+                     f" / {_v('sb_zalert', SETUP_VALIDADO['z_alert']):.2f}",
+                     expanded=False):
         st.caption("Monitorar")
-        z_monitor = st.slider("|z| >=", 0.5, 3.0, SETUP_VALIDADO["z_monitor"], 0.05)
+        z_monitor = st.slider("|z| >=", 0.5, 3.0, SETUP_VALIDADO["z_monitor"],
+                              0.05, key="sb_zmon")
         dz_monitor = st.slider("d|z| (1 pregão) >=", 0.0, 0.5,
-                               SETUP_VALIDADO["dz_monitor"], 0.01)
+                               SETUP_VALIDADO["dz_monitor"], 0.01, key="sb_dzmon")
         corr_min = st.slider("Correlação >=", 0.0, 1.0,
-                             SETUP_VALIDADO["corr_min"], 0.05)
+                             SETUP_VALIDADO["corr_min"], 0.05, key="sb_corrmin")
         st.caption("Alerta máximo")
-        z_alert = st.slider("|z| >= ", 0.5, 3.0, SETUP_VALIDADO["z_alert"], 0.05)
+        z_alert = st.slider("|z| >= ", 0.5, 3.0, SETUP_VALIDADO["z_alert"],
+                            0.05, key="sb_zalert")
         dz_alert = st.slider("d|z| (1 pregão) >= ", 0.0, 0.5,
-                             SETUP_VALIDADO["dz_alert"], 0.01)
+                             SETUP_VALIDADO["dz_alert"], 0.01, key="sb_dzalert")
 
-    with st.expander("Saída / convergência", expanded=False):
+    with st.expander(f"Saída · |z|<={_v('sb_zexit', SETUP_VALIDADO['z_exit']):.2f}"
+                     f" · {_v('sb_hold', SETUP_VALIDADO['max_hold'])}p",
+                     expanded=False):
         z_exit = st.slider("Convergência |z| <=", 0.0, 1.0,
-                           SETUP_VALIDADO["z_exit"], 0.05)
+                           SETUP_VALIDADO["z_exit"], 0.05, key="sb_zexit")
         max_hold = st.number_input("Máx. holding (pregões)", 5, 252,
-                                   SETUP_VALIDADO["max_hold"])
-        tem_posicao = st.checkbox(
-            "Tenho posição aberta neste par", value=False,
-            help="Sem posição, 'CONVERGÊNCIA -> encerrar' não faz sentido — o "
-                 "painel mostra 'SEM EDGE' em vez disso.")
+                                   SETUP_VALIDADO["max_hold"], key="sb_hold")
 
     with st.expander("Custos", expanded=False):
         cost_rt = st.number_input(
@@ -159,13 +178,36 @@ cfg = {"z_monitor": z_monitor, "dz_monitor": dz_monitor, "corr_min": corr_min,
        "z_alert": z_alert, "dz_alert": dz_alert, "z_exit": z_exit,
        "max_hold": max_hold, "corr_win": corr_win}
 
+# Gatilhos fora de ordem quebram a maquina de estados em silencio:
+# z_monitor > z_alert faz ALERTA disparar antes de MONITORAR; z_exit acima de
+# z_monitor faz o ramo de saida engolir tudo e o painel dizer "SEM EDGE" sempre.
+ordem = []
+if not (z_exit < z_monitor):
+    ordem.append(f"saída ({z_exit:.2f}) tem que ser MENOR que monitorar ({z_monitor:.2f})")
+if not (z_monitor <= z_alert):
+    ordem.append(f"monitorar ({z_monitor:.2f}) não pode passar de alerta ({z_alert:.2f})")
+if not (dz_monitor <= dz_alert):
+    ordem.append(f"d|z| de monitorar ({dz_monitor:.2f}) não pode passar do de "
+                 f"alerta ({dz_alert:.2f})")
+if ordem:
+    st.error("**Gatilhos fora de ordem** — corrija na barra lateral:\n\n"
+             + "\n".join(f"- {o}" for o in ordem))
+    st.stop()
+
 # Aviso de drift: você está no setup validado ou em algo que mexeu semana passada?
-drift = [k for k, v in SETUP_VALIDADO.items()
-         if k in cfg and abs(cfg[k] - v) > 1e-9]
-if mean_win != SETUP_VALIDADO["mean_win"]:
-    drift.append(f"mean_win={mean_win}")
-if vol_win != SETUP_VALIDADO["vol_win"]:
-    drift.append(f"vol_win={vol_win}")
+_fmt = {"z_monitor": "monitorar |z|", "dz_monitor": "monitorar d|z|",
+        "corr_min": "corr mín", "z_alert": "alerta |z|", "dz_alert": "alerta d|z|",
+        "z_exit": "saída |z|", "max_hold": "máx holding"}
+drift = [f"{_fmt[k]} {cfg[k]:g} (validado {v:g})"
+         for k, v in SETUP_VALIDADO.items()
+         if k in cfg and k in _fmt and abs(cfg[k] - v) > 1e-9]
+for nome, atual, val in (("média", mean_win, SETUP_VALIDADO["mean_win"]),
+                         ("vol", vol_win, SETUP_VALIDADO["vol_win"]),
+                         ("corr", corr_win, SETUP_VALIDADO["corr_win"])):
+    if atual != val:
+        drift.append(f"janela de {nome} {atual} (validado {val})")
+if corr_basis != "returns":
+    drift.append("correlação em níveis (validado: log-retornos)")
 
 # =============================================================================
 # Commit: só o que afeta o cálculo pesado exige clique em Analisar
@@ -197,10 +239,22 @@ except ValueError as err:
     st.error(str(err))
     st.stop()
 
+# A PARTIR DAQUI usa-se sempre o parametro EFETIVO do calculo, nunca o widget.
+# Em estado stale os dois divergem, e o painel desenhava bandas de uma janela
+# sobre barras de z de outra, com o titulo mentindo a janela.
+mean_win, vol_win = ps.mean_win, ps.vol_win
+corr_win, corr_basis = ps.corr_win, ps.corr_basis
+cfg["corr_win"] = ps.corr_win
+
 sig = core.classify(ps, cfg, tem_posicao=tem_posicao)
 L, S = html.escape(lr.display), html.escape(sr.display)
-hold_ref = ps.hl[0] if ps.hl and np.isfinite(ps.hl[0]) else max_hold
+
+# O aluguel so corre ate o holding maximo: um par com meia-vida de 180p que
+# voce fecha em 63p nao paga 180 pregoes de BTC. Sem o teto, z_be inflava ~3x.
+hold_ref = min(ps.hl[0], max_hold) if ps.hl and np.isfinite(ps.hl[0]) else max_hold
 z_be = core.breakeven_z(ps.sigma, cost_rt, rent_aa, hold_ref)
+# O edge é economicamente um quarto gate: "esse sinal paga a conta?".
+edge = abs(ps.z_now) - z_exit - z_be
 
 # =============================================================================
 # Cabeçalho + sinal (um bloco só)
@@ -224,15 +278,28 @@ gates_html = "".join(
     f'<span class="g-mark">{"OK" if g.ok else "X"}</span> '
     f'{g.nome} <b>{g.valor}</b> <span class="g-thr">{g.gatilho}</span></span>'
     for g in sig.gates)
+# 4º chip: o edge líquido. Sem ele a tríade responde "o par esticou?" mas não
+# "vale a pena?", que é a pergunta que decide o trade.
+gates_html += (
+    f'<span class="gate {"ok" if edge > 0 else "fail"}">'
+    f'<span class="g-mark">{"OK" if edge > 0 else "X"}</span> '
+    f'edge <b>{edge:+.2f} z</b> '
+    f'<span class="g-thr">custo {z_be:.2f}</span></span>')
+
+# O aviso de stale vem ANTES do sinal: ler "ALERTA MÁXIMO" em 28px e só depois
+# descobrir que é do par anterior é pior do que não mostrar nada.
+if stale:
+    st.warning("A configuração mudou desde o último cálculo. Clique em "
+               "**Analisar** — o painel abaixo ainda é do par anterior.")
 
 st.markdown(f"""
-<div class="ls-head">
+<div class="ls-head{' is-stale' if stale else ''}">
   <div class="ls-pair">
     <span class="chip chip-long">LONG · {L}</span>
     <span class="pair-x">x</span>
     <span class="chip chip-short">SHORT · {S}</span>
-    {badge}
   </div>
+  {badge}
   <div class="lv-{sig.level} {dir_cls}">
     <div class="sb-label">{sig.label}</div>
     {side_html}
@@ -242,33 +309,132 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-if stale:
-    st.warning("A configuração mudou desde o último cálculo. "
-               "Clique em **Analisar** para atualizar — os números abaixo "
-               "ainda são do par anterior.")
-
-for note in [n for n in (lr.resolution_note, sr.resolution_note) if n]:
-    st.caption(note)
-for w in lr.warnings + sr.warnings + ps.problems:
-    st.warning(w)
+# Avisos de qualidade de dado consolidados: empilhados inline eles somavam até
+# 8 blocos de largura total entre o sinal e o gráfico, desfazendo a subida dele.
+notas = [n for n in (lr.resolution_note, sr.resolution_note) if n]
+alertas = list(lr.warnings) + list(sr.warnings) + list(ps.problems)
 if al.pct_dropped >= 2:
-    st.warning(
+    alertas.append(
         f"Calendários diferentes: {al.n_dropped} pregões descartados "
         f"({al.pct_dropped:.1f}% da amostra) por falta de negócio em um dos "
         f"ativos. Estatísticas calculadas sobre {al.n_used} pregões.")
+if alertas:
+    with st.expander(f"Qualidade do dado · {len(alertas)} aviso"
+                     f"{'s' if len(alertas) > 1 else ''}", expanded=False):
+        for w in alertas:
+            st.warning(w)
+        for n in notas:
+            st.caption(n)
+elif notas:
+    st.caption(" · ".join(notas))
+
 if drift:
-    st.info("Parâmetros fora do setup validado do backtest: "
-            + ", ".join(str(d) for d in drift))
+    d1, d2 = st.columns([4, 1])
+    d1.info("Fora do setup validado do backtest: " + " · ".join(drift))
+    if d2.button("Restaurar", width="stretch",
+                 help="Volta todos os parâmetros ao setup validado"):
+        for k in ("sb_mean", "sb_vol", "sb_corr", "sb_zmon", "sb_dzmon",
+                  "sb_corrmin", "sb_zalert", "sb_dzalert", "sb_zexit", "sb_hold"):
+            st.session_state.pop(k, None)
+        st.rerun()
 
 # checklist por par — chaves com o ticker, senão vaza entre pares
 if sig.level == "alert":
     st.markdown("**Checklist do Alerta Máximo — validar antes de executar:**")
     k = f"{lr.symbol}_{sr.symbol}"
     q1, q2, q3, q4 = st.columns(4)
-    q1.checkbox("Liquidez OK", key=f"chk_liq_{k}")
-    q2.checkbox("Spread de tela OK", key=f"chk_spr_{k}")
-    q3.checkbox("Aluguel checado", key=f"chk_alu_{k}")
-    q4.checkbox("Sem evento societário", key=f"chk_evt_{k}")
+    c_ok = [
+        q1.checkbox("Liquidez OK", key=f"chk_liq_{k}"),
+        q2.checkbox("Spread de tela OK", key=f"chk_spr_{k}"),
+        q3.checkbox("Aluguel checado", key=f"chk_alu_{k}"),
+        q4.checkbox("Sem evento societário", key=f"chk_evt_{k}"),
+    ]
+    # Fecha o loop: marcar as 4 caixas entrega a ordem pronta, que é o próximo
+    # passo real. Antes o checklist não produzia nada.
+    if all(c_ok):
+        _sz = core.sizing(ps.frame, capital)
+        _lado = "vender" if sig.side == "short_ratio" else "comprar"
+        _lado_s = "comprar" if sig.side == "short_ratio" else "vender"
+        st.success(
+            f"**Checklist completo — ordem para R$ {capital:,.0f} por perna:**  "
+            f"{_lado} **{_sz['q_long']}** {L} a ~R$ {_sz['p_long']:.2f}  ·  "
+            f"{_lado_s} **{_sz['q_short']}** {S} a ~R$ {_sz['p_short']:.2f}  ·  "
+            f"resíduo de lote {_sz['residuo_pct']:+.2%}".replace(",", "."))
+
+
+# =============================================================================
+# Gráficos — acima das estatísticas: primeiro se enxerga, depois se confere
+# =============================================================================
+# Ordem interna: Z-Score primeiro. Antes ele nascia abaixo da dobra.
+fig = make_subplots(
+    rows=3, cols=1, shared_xaxes=True, row_heights=[0.38, 0.30, 0.32],
+    subplot_titles=[f"Z-Score ({mean_win}p / {vol_win}p)",
+                    f"Spread ln({L}) - ln({S}) · média {mean_win}p",
+                    "Preços normalizados (base 100)"],
+    vertical_spacing=0.07)
+
+# 1) Z-Score — zonas como faixas, não 7 linhas horizontais
+fig.add_trace(go.Bar(x=ps.z.index, y=ps.z, name="Z-Score",
+                     marker_color=z_bar_colors(ps.z, cfg),
+                     hovertemplate="z = %{y:.2f}<extra></extra>"),
+              row=1, col=1)
+zvals = ps.z.dropna()
+zmax = float(np.nanmax(np.abs(zvals.values))) if len(zvals) else 3.0
+top = max(zmax * 1.1, z_alert * 1.3)
+fig.add_hrect(y0=z_alert, y1=top, fillcolor=rgba(C_SHORT, 0.07),
+              layer="below", line_width=0, row=1, col=1)
+fig.add_hrect(y0=-top, y1=-z_alert, fillcolor=rgba(C_LONG, 0.07),
+              layer="below", line_width=0, row=1, col=1)
+fig.add_hrect(y0=-z_exit, y1=z_exit, fillcolor=rgba(C_ACCENT, 0.10),
+              layer="below", line_width=0, row=1, col=1)
+fig.add_hline(y=0, line_color=C_GRAPHIC, opacity=0.8, row=1, col=1)
+fig.add_hline(y=z_monitor, line_dash="dash", line_color=C_GRAPHIC,
+              opacity=0.6, row=1, col=1)
+fig.add_hline(y=-z_monitor, line_dash="dash", line_color=C_GRAPHIC,
+              opacity=0.6, row=1, col=1)
+fig.update_yaxes(range=[-top, top], row=1, col=1)
+
+# 2) Spread + bandas (bandas fora da legenda: são autoevidentes)
+roll_m = ps.spread.rolling(mean_win).mean()
+roll_s = ps.spread.rolling(vol_win).std()
+fig.add_trace(go.Scatter(x=ps.spread.index, y=ps.spread, name="Spread",
+                         line=dict(color=C_ACCENT, width=2)), row=2, col=1)
+fig.add_trace(go.Scatter(x=roll_m.index, y=roll_m, name="Média",
+                         line=dict(color=C_GRAPHIC, width=1)), row=2, col=1)
+for mult, color in ((z_alert, C_SHORT), (-z_alert, C_LONG)):
+    fig.add_trace(go.Scatter(x=roll_m.index, y=roll_m + mult * roll_s,
+                             showlegend=False, hoverinfo="skip",
+                             line=dict(color=color, width=1, dash="dot")),
+                  row=2, col=1)
+for mult in (z_monitor, -z_monitor):
+    col = C_SHORT if mult > 0 else C_LONG
+    fig.add_trace(go.Scatter(x=roll_m.index, y=roll_m + mult * roll_s,
+                             showlegend=False, hoverinfo="skip",
+                             line=dict(color=rgba(col, 0.45), width=1,
+                                       dash="dash")),
+                  row=2, col=1)
+
+# 3) Preços normalizados — normalizados DEPOIS do alinhamento
+ln = ps.frame["long"] / ps.frame["long"].iloc[0] * 100
+sn = ps.frame["short"] / ps.frame["short"].iloc[0] * 100
+fig.add_trace(go.Scatter(x=ln.index, y=ln, name=f"LONG {L}",
+                         line=dict(color=C_LONG, width=2)), row=3, col=1)
+# dash na perna SHORT: sob deuteranopia as duas cores convergem
+fig.add_trace(go.Scatter(x=sn.index, y=sn, name=f"SHORT {S}",
+                         line=dict(color=C_SHORT, width=2, dash="dot")),
+              row=3, col=1)
+
+# top_margin=104 + legend_y=1.06: com 86/1.03 a legenda (29px de altura) e o
+# título do subplot 1 (18px) se encostavam — é o bug antigo de sobreposição
+# legenda × título, em versão atenuada. Agora sobram ~11px entre eles.
+style_fig(fig, height=600, top_margin=104, legend_y=1.06)
+fig.update_annotations(font=dict(size=13, color=C_MUTED))
+st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG)
+
+st.caption("Faixas: vermelha = zona de venda do ratio · verde = zona de compra "
+           "· roxa = banda de saída. Tracejado = monitorar, pontilhado = alerta.")
+
+st.markdown("")
 
 
 # =============================================================================
@@ -289,7 +455,7 @@ r1[0].markdown(metric_card(
 mom = {True: "esticando", False: "revertendo", None: "parado"}[sig.esticando]
 r1[1].markdown(metric_card(
     "d|z| · 1 pregão", f"{ps.dz_now:+.3f}",
-    f"{mom} · ruído de fundo {ps.dz_noise:.3f}", "accent"), unsafe_allow_html=True)
+    f"{mom} · ruído de fundo {ps.dz_noise:.3f}", "neutral"), unsafe_allow_html=True)
 
 if ps.hl is None:
     hl_v, hl_s, hl_t = "n/d", "amostra insuficiente", "na"
@@ -305,7 +471,15 @@ r1[2].markdown(metric_card("Meia-vida de reversão", hl_v, hl_s, hl_t),
 
 r2 = st.columns(3)
 if ps.corr_now is None:
-    cv, cs, ct = "n/d", f"janela {corr_win}p > histórico", "na"
+    # Sem correlação o gate nunca passa e NENHUM sinal pode disparar — o painel
+    # dizia calmamente "NEUTRO · aguardar", que lê como "sem oportunidade".
+    st.warning(
+        f"**Nenhum sinal pode disparar:** a janela de correlação "
+        f"({corr_win} pregões) é maior que o histórico disponível "
+        f"({ps.n_obs} pregões), então o gate de correlação nunca passa. "
+        f"Aumente o **Histórico** na barra lateral ou reduza a **janela de "
+        f"correlação** em Janelas.")
+    cv, cs, ct = "n/d", f"janela {corr_win}p > {ps.n_obs}p disponíveis", "na"
 else:
     base = "retornos" if corr_basis == "returns" else "níveis"
     cv, cs = f"{ps.corr_now:.3f}", f"{base} · gatilho >= {corr_min:.2f}"
@@ -320,103 +494,32 @@ v, s_, t = pv(ps.adf_p, "spread estacionário", "spread não estacionário")
 r2[2].markdown(metric_card("ADF do spread · p", v, s_, t), unsafe_allow_html=True)
 
 # edge líquido — o número que responde "esse sinal paga a conta?"
-edge = abs(ps.z_now) - z_exit - z_be
-st.markdown("")
-e1, e2 = st.columns([1, 2])
-e1.markdown(metric_card(
-    "Edge líquido", f"{edge:+.2f} z", f"break-even em {z_be:.2f} z",
-    "long" if edge > 0.30 else "short" if edge < 0 else "weak"),
-    unsafe_allow_html=True)
-with e2:
-    custo_total = cost_rt + rent_aa * hold_ref / 252
-    if z_be > z_exit:
-        st.error(
-            f"**A regra de saída não paga o custo.** O break-even é "
-            f"{z_be:.2f} z e você sai em |z| <= {z_exit:.2f} — sair nesse "
-            f"ponto é sair no zero a zero ou pior. Custo total considerado: "
-            f"{custo_total * 100:.2f}% do notional em {hold_ref:.0f} pregões.")
-    elif edge < 0:
-        st.warning(f"Amplitude disponível (|z| {abs(ps.z_now):.2f} até a saída "
-                   f"em {z_exit:.2f}) menor que o custo de {z_be:.2f} z.")
-    else:
-        st.success(f"Amplitude de {abs(ps.z_now) - z_exit:.2f} z contra custo "
-                   f"de {z_be:.2f} z — sobram {edge:.2f} z líquidos.")
+custo_total = cost_rt + rent_aa * hold_ref / 252
+st.caption(
+    f"**Edge líquido {edge:+.2f} z** — amplitude de |z| {abs(ps.z_now):.2f} até "
+    f"a saída em {z_exit:.2f}, contra um break-even de {z_be:.2f} z "
+    f"(custo total {custo_total * 100:.2f}% do notional em "
+    f"{hold_ref:.0f} pregões)."
+    + (f"  ⚠️ Como o break-even ({z_be:.2f}) é maior que a banda de saída "
+       f"({z_exit:.2f}), fechar em |z| ≤ {z_exit:.2f} sai no zero a zero — "
+       f"revise custos ou a regra de saída."
+       if z_be > z_exit else ""))
+
+# Só vira alarme quando há um sinal de verdade para atrapalhar. Antes disparava
+# em todo par e todo dia, inclusive sem sinal — o jeito clássico de treinar
+# o usuário a ignorar vermelho.
+if sig.level in ("alert", "watch") and edge < 0:
+    st.error(f"**Sinal sem edge.** O custo ({z_be:.2f} z) consome toda a "
+             f"amplitude disponível até a saída. Não opere este par nesta "
+             f"configuração de custo.")
 
 st.markdown("")
 
 # =============================================================================
-# Abas
+# Abas — detalhe sob demanda
 # =============================================================================
-tab_g, tab_e, tab_s, tab_ia, tab_m = st.tabs(
-    ["Gráficos", "Estatísticas", "Sizing", "Análise IA", "Manual"])
-
-with tab_g:
-    # Ordem: Z-Score primeiro. Antes ele nascia abaixo da dobra.
-    fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True, row_heights=[0.40, 0.33, 0.27],
-        subplot_titles=[f"Z-Score ({mean_win}p / {vol_win}p)",
-                        f"Spread ln({L}) - ln({S}) · média {mean_win}p",
-                        "Preços normalizados (base 100)"],
-        vertical_spacing=0.08)
-
-    # 1) Z-Score — zonas como faixas, não 7 linhas horizontais
-    fig.add_trace(go.Bar(x=ps.z.index, y=ps.z, name="Z-Score",
-                         marker_color=z_bar_colors(ps.z, cfg),
-                         hovertemplate="z = %{y:.2f}<extra></extra>"),
-                  row=1, col=1)
-    zvals = ps.z.dropna()
-    zmax = float(np.nanmax(np.abs(zvals.values))) if len(zvals) else 3.0
-    top = max(zmax * 1.1, z_alert * 1.3)
-    fig.add_hrect(y0=z_alert, y1=top, fillcolor=rgba(C_SHORT, 0.07),
-                  layer="below", line_width=0, row=1, col=1)
-    fig.add_hrect(y0=-top, y1=-z_alert, fillcolor=rgba(C_LONG, 0.07),
-                  layer="below", line_width=0, row=1, col=1)
-    fig.add_hrect(y0=-z_exit, y1=z_exit, fillcolor=rgba(C_ACCENT, 0.10),
-                  layer="below", line_width=0, row=1, col=1)
-    fig.add_hline(y=0, line_color=C_GRAPHIC, opacity=0.8, row=1, col=1)
-    fig.add_hline(y=z_monitor, line_dash="dash", line_color=C_GRAPHIC,
-                  opacity=0.6, row=1, col=1)
-    fig.add_hline(y=-z_monitor, line_dash="dash", line_color=C_GRAPHIC,
-                  opacity=0.6, row=1, col=1)
-    fig.update_yaxes(range=[-top, top], row=1, col=1)
-
-    # 2) Spread + bandas (bandas fora da legenda: são autoevidentes)
-    roll_m = ps.spread.rolling(mean_win).mean()
-    roll_s = ps.spread.rolling(vol_win).std()
-    fig.add_trace(go.Scatter(x=ps.spread.index, y=ps.spread, name="Spread",
-                             line=dict(color=C_ACCENT, width=2)), row=2, col=1)
-    fig.add_trace(go.Scatter(x=roll_m.index, y=roll_m, name="Média",
-                             line=dict(color=C_GRAPHIC, width=1)), row=2, col=1)
-    for mult, color in ((z_alert, C_SHORT), (-z_alert, C_LONG)):
-        fig.add_trace(go.Scatter(x=roll_m.index, y=roll_m + mult * roll_s,
-                                 showlegend=False, hoverinfo="skip",
-                                 line=dict(color=color, width=1, dash="dot")),
-                      row=2, col=1)
-    for mult in (z_monitor, -z_monitor):
-        col = C_SHORT if mult > 0 else C_LONG
-        fig.add_trace(go.Scatter(x=roll_m.index, y=roll_m + mult * roll_s,
-                                 showlegend=False, hoverinfo="skip",
-                                 line=dict(color=rgba(col, 0.45), width=1,
-                                           dash="dash")),
-                      row=2, col=1)
-
-    # 3) Preços normalizados — normalizados DEPOIS do alinhamento
-    ln = ps.frame["long"] / ps.frame["long"].iloc[0] * 100
-    sn = ps.frame["short"] / ps.frame["short"].iloc[0] * 100
-    fig.add_trace(go.Scatter(x=ln.index, y=ln, name=f"LONG {L}",
-                             line=dict(color=C_LONG, width=2)), row=3, col=1)
-    # dash na perna SHORT: sob deuteranopia as duas cores convergem
-    fig.add_trace(go.Scatter(x=sn.index, y=sn, name=f"SHORT {S}",
-                             line=dict(color=C_SHORT, width=2, dash="dot")),
-                  row=3, col=1)
-
-    style_fig(fig, height=620, top_margin=70)
-    fig.update_annotations(font=dict(size=13, color=C_MUTED))
-    st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG)
-
-    st.caption("Faixas: vermelha = zona de venda do ratio · verde = zona de "
-               "compra · roxa = banda de saída. Tracejado = monitorar, "
-               "pontilhado = alerta.")
+tab_e, tab_s, tab_ia, tab_m = st.tabs(
+    ["Estatísticas", "Sizing", "Análise IA", "Manual"])
 
 with tab_e:
     ca, cb = st.columns(2)
@@ -487,8 +590,8 @@ with tab_s:
         "short"), unsafe_allow_html=True)
     g3.markdown(metric_card(
         "Resíduo de lote", f"R$ {sz['residuo']:,.0f}".replace(",", "."),
-        f"{sz['residuo_pct']:+.2%} do capital — exposição direcional",
-        "weak" if abs(sz["residuo_pct"]) > 0.02 else "ok"), unsafe_allow_html=True)
+        f"{sz['residuo_pct']:+.2%} do capital",
+        "weak" if abs(sz["residuo_pct"]) > 0.02 else "pass"), unsafe_allow_html=True)
 
     st.caption("O resíduo de arredondamento de lote é exposição direcional "
                "real. Em papel caro ele fica grande e normalmente ninguém "
