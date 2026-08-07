@@ -1,566 +1,621 @@
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from statsmodels.tsa.stattools import coint, adfuller
-import anthropic
+"""LS Dashboard — versão desktop.
+
+Toda a lógica quantitativa vive em core.py; os dados em datasource.py; o
+visual em theme.py. Este arquivo é só a camada de apresentação — foi assim
+que app.py e mobile.py pararam de divergir.
+"""
+
+import html
 import time
 from datetime import datetime
 
-st.set_page_config(page_title="LS Dashboard", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+from plotly.subplots import make_subplots
 
-# ---------------------------------------------------------------------------
-# Design system — Catppuccin Mocha
-# LONG  = sempre verde  #a6e3a1   |   SHORT = sempre vermelho #f38ba8
-# Acento = roxo #cba6f7           |   Texto = #cdd6f4 sobre #1e1e2e / #313244
-# ---------------------------------------------------------------------------
-C_LONG    = "#a6e3a1"
-C_SHORT   = "#f38ba8"
-C_ACCENT  = "#cba6f7"
-C_MONITOR = "#fab387"
-C_TEAL    = "#94e2d5"
-C_YELLOW  = "#f9e2af"
-C_TEXT    = "#cdd6f4"
-C_MUTED   = "#a6adc8"
-C_FAINT   = "#7f849c"
-C_BG      = "#1e1e2e"
-C_SURF    = "#313244"
-C_CARD    = "#232334"
-C_GRID    = "#313244"
-C_NEUTRAL = "#45475a"
+import core
+import theme
+from core import SETUP_VALIDADO
+from datasource import TZ_BR, DataError, align_pair, fetch_series
+from theme import (C_ACCENT, C_GRAPHIC, C_LONG, C_MUTED, C_SHORT, C_STAT_OK,
+                   PLOTLY_CONFIG, metric_card, rgba, style_fig, z_bar_colors,
+                   z_tone)
 
-st.markdown("""
-<style>
-    /* ---------- base ---------- */
-    .block-container { padding-top: 1.4rem; padding-bottom: 2.5rem; }
-    h1, h2, h3 { letter-spacing: -0.02em; }
+st.set_page_config(page_title="LS Dashboard", page_icon="📊",
+                   layout="wide", initial_sidebar_state="expanded")
+st.markdown(theme.CSS, unsafe_allow_html=True)
 
-    /* ---------- legacy signal text (compat) ---------- */
-    .signal-long    { color: #a6e3a1; font-weight: bold; font-size: 1.4rem; }
-    .signal-short   { color: #f38ba8; font-weight: bold; font-size: 1.4rem; }
-    .signal-neutral { color: #cdd6f4; font-weight: bold; font-size: 1.4rem; }
-    .fund-header    { color: #cba6f7; font-size: 1.1rem; font-weight: bold; }
+PERIOD_MAP = {"6 meses": "6mo", "1 ano": "1y", "2 anos": "2y",
+              "3 anos": "3y", "5 anos": "5y"}
 
-    /* ---------- hero ---------- */
-    .ls-hero {
-        display: flex; justify-content: space-between; align-items: center;
-        flex-wrap: wrap; gap: 16px;
-        background: linear-gradient(135deg, #26263a 0%, #1e1e2e 65%);
-        border: 1px solid #313244; border-radius: 16px;
-        padding: 20px 26px; margin-bottom: 14px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.28);
-    }
-    .ls-hero h1 { font-size: 1.55rem; font-weight: 800; margin: 0; color: #cdd6f4; }
-    .ls-hero p  { margin: 4px 0 0; color: #a6adc8; font-size: 0.85rem; }
-    .ls-hero-pair { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .chip {
-        display: inline-block; padding: 6px 16px; border-radius: 999px;
-        font-weight: 700; font-size: 0.92rem; white-space: nowrap;
-    }
-    .chip-long  { background: rgba(166,227,161,0.12); color: #a6e3a1; border: 1px solid rgba(166,227,161,0.45); }
-    .chip-short { background: rgba(243,139,168,0.12); color: #f38ba8; border: 1px solid rgba(243,139,168,0.45); }
-    .chip-fund  { background: rgba(203,166,247,0.12); color: #cba6f7; border: 1px solid rgba(203,166,247,0.45); }
-    .pair-x { color: #585b70; font-weight: 800; font-size: 1.05rem; }
-
-    /* ---------- signal banner ---------- */
-    .signal-banner {
-        display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 14px;
-        border-radius: 14px; border: 1px solid #45475a;
-        padding: 15px 22px; margin: 4px 0 14px;
-        background: rgba(49,50,68,0.35);
-        box-shadow: 0 4px 14px rgba(0,0,0,0.22);
-    }
-    .signal-banner .sb-label { font-size: 1.28rem; font-weight: 800; color: #cdd6f4; }
-    .signal-banner .sb-desc  { font-size: 0.82rem; color: #a6adc8; }
-    .signal-banner.signal-long  { background: rgba(166,227,161,0.09); border-color: rgba(166,227,161,0.50); }
-    .signal-banner.signal-long .sb-label  { color: #a6e3a1; }
-    .signal-banner.signal-short { background: rgba(243,139,168,0.09); border-color: rgba(243,139,168,0.50); }
-    .signal-banner.signal-short .sb-label { color: #f38ba8; }
-
-    /* ---------- metric cards ---------- */
-    .metric-card {
-        background: #232334; border: 1px solid #313244; border-left: 3px solid #585b70;
-        border-radius: 12px; padding: 13px 15px; height: 100%;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.18);
-    }
-    .metric-label {
-        font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
-        letter-spacing: 0.07em; color: #a6adc8; white-space: nowrap;
-        overflow: hidden; text-overflow: ellipsis;
-    }
-    .metric-value {
-        font-size: 1.42rem; font-weight: 800; color: #cdd6f4;
-        margin-top: 2px; font-variant-numeric: tabular-nums;
-    }
-    .metric-sub { font-size: 0.75rem; color: #7f849c; margin-top: 2px; }
-    .metric-card.tone-green  { border-left-color: #a6e3a1; }
-    .metric-card.tone-green  .metric-value { color: #a6e3a1; }
-    .metric-card.tone-red    { border-left-color: #f38ba8; }
-    .metric-card.tone-red    .metric-value { color: #f38ba8; }
-    .metric-card.tone-purple { border-left-color: #cba6f7; }
-    .metric-card.tone-purple .metric-value { color: #cba6f7; }
-    .metric-card.tone-amber  { border-left-color: #f9e2af; }
-    .metric-card.tone-amber  .metric-value { color: #f9e2af; }
-
-    /* ---------- empty state ---------- */
-    .empty-state {
-        border: 1px dashed #45475a; border-radius: 14px;
-        padding: 44px 24px; text-align: center;
-        color: #a6adc8; background: rgba(49,50,68,0.25); font-size: 0.95rem;
-    }
-    .empty-state b { color: #cba6f7; }
-
-    /* ---------- streamlit widgets ---------- */
-    .stTabs [data-baseweb="tab-list"] { gap: 6px; border-bottom: 1px solid #313244; }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 9px 9px 0 0; padding: 8px 18px;
-        color: #a6adc8; font-weight: 600; background: transparent;
-    }
-    .stTabs [aria-selected="true"] { color: #cba6f7 !important; background: rgba(203,166,247,0.08); }
-
-    div[data-testid="stMetric"] {
-        background: #232334; border: 1px solid #313244;
-        border-radius: 12px; padding: 12px 16px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.18);
-    }
-    div[data-testid="stMetric"] label { color: #a6adc8 !important; }
-
-    div[data-testid="stExpander"] {
-        border: 1px solid #313244; border-radius: 10px;
-        background: rgba(49,50,68,0.25); overflow: hidden;
-    }
-    div[data-testid="stDataFrame"] { border: 1px solid #313244; border-radius: 12px; overflow: hidden; }
-
-    section[data-testid="stSidebar"] { background: #181825; border-right: 1px solid #313244; }
-    section[data-testid="stSidebar"] hr { margin: 0.6rem 0; }
-
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #cba6f7 0%, #89b4fa 100%);
-        color: #11111b; font-weight: 700; border: none; border-radius: 10px;
-    }
-    .stButton > button[kind="primary"]:hover { filter: brightness(1.08); }
-
-    footer { visibility: hidden; }
-</style>
-""", unsafe_allow_html=True)
-
-def metric_card(label, value, sub="", tone="neutral"):
-    """Card HTML para métricas-chave (camada visual apenas)."""
-    return (
-        f'<div class="metric-card tone-{tone}">'
-        f'<div class="metric-label">{label}</div>'
-        f'<div class="metric-value">{value}</div>'
-        f'<div class="metric-sub">{sub}</div>'
-        f'</div>'
-    )
-
-def style_fig(fig, height, top_margin=60, show_legend=True, legend_y=1.02):
-    """Layout Plotly consistente com o tema (camada visual apenas)."""
-    fig.update_layout(
-        height=height,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(49,50,68,0.25)",
-        font=dict(color=C_TEXT, size=12),
-        hovermode="x unified",
-        hoverlabel=dict(bgcolor="#181825", bordercolor=C_SURF, font=dict(color=C_TEXT, size=12)),
-        legend=dict(orientation="h", yanchor="bottom", y=legend_y, x=0,
-                    bgcolor="rgba(0,0,0,0)", font=dict(size=12)),
-        showlegend=show_legend,
-        margin=dict(l=0, r=0, t=top_margin, b=0),
-    )
-    fig.update_xaxes(gridcolor=C_GRID, zerolinecolor=C_GRID, linecolor=C_SURF)
-    fig.update_yaxes(gridcolor=C_GRID, zerolinecolor=C_GRID, linecolor=C_SURF)
-    return fig
-
-PLOTLY_CONFIG = {"displayModeBar": False}
 
 def get_secret(key, default=""):
-    """Lê um secret com segurança — não quebra o app se não houver secrets.toml."""
     try:
         return st.secrets.get(key, default)
     except Exception:
         return default
 
-default_api_key   = get_secret("ANTHROPIC_API_KEY", "")
 
+@st.cache_data(ttl=900, show_spinner=False)
+def load_pair(long_in: str, short_in: str, period: str, mean_win: int,
+              vol_win: int, corr_win: int, corr_basis: str):
+    """Baixa, alinha e calcula. Cacheado por (par, período, janelas).
+
+    Os gatilhos NÃO entram na chave: mexer num slider de z não pode refazer
+    coint, adfuller e polyfit.
+    """
+    lr = fetch_series(long_in, period)
+    sr = fetch_series(short_in, period)
+    al = align_pair(lr.series, sr.series)
+    stats = core.compute_pair(al.frame, mean_win, vol_win, corr_win, corr_basis)
+    return lr, sr, al, stats
+
+
+# =============================================================================
+# Sidebar
+# =============================================================================
 with st.sidebar:
-    st.title("⚙️ Configurações")
-    mode = "📈 Long / Short"
-    st.divider()
+    st.title("Configurações")
 
-    if mode == "📈 Long / Short":
-        st.subheader("Ativos")
-        col1, col2 = st.columns(2)
-        with col1:
-            long_ticker  = st.text_input("LONG",  value="PETR4.SA").upper().strip()
-        with col2:
-            short_ticker = st.text_input("SHORT", value="VALE3.SA").upper().strip()
+    st.subheader("Par")
+    # A troca precisa acontecer ANTES dos widgets existirem: o Streamlit
+    # proíbe reescrever a chave de um widget já instanciado no mesmo run.
+    if st.session_state.pop("_do_swap", False):
+        a = st.session_state.get("in_long", "PETR4")
+        b = st.session_state.get("in_short", "VALE3")
+        st.session_state["in_long"], st.session_state["in_short"] = b, a
 
-        # 252 pregões de correlação exigem histórico longo → default 2 anos
-        period_map   = {"6 meses": "6mo", "1 ano": "1y", "2 anos": "2y", "3 anos": "3y", "5 anos": "5y"}
-        period_label = st.selectbox("Histórico", list(period_map.keys()), index=2)
-        period       = period_map[period_label]
-        interval     = "1d"  # estratégia definida em pregões (diário)
+    c1, c2 = st.columns(2)
+    with c1:
+        long_in = st.text_input("LONG", value="PETR4", key="in_long",
+                                help="Digite só o ticker: petr4, vale3, bova11, "
+                                     "aapl, ibov. O sufixo .SA é automático.")
+    with c2:
+        short_in = st.text_input("SHORT", value="VALE3", key="in_short")
 
-        run_btn      = st.button("▶ Analisar", use_container_width=True, type="primary")
-        auto_refresh = st.toggle("Auto-refresh (30s)", value=False)
-        st.divider()
-
-        with st.expander("📐 Ratio & Janelas", expanded=False):
-            use_log  = st.checkbox("Usar log ratio  ln(LONG/SHORT)", value=True)
-            mean_win = st.number_input("Média do ratio (z-score)",    5, 504, 63)
-            vol_win  = st.number_input("Bandas / volatilidade (z-score)", 5, 504, 63)
-            corr_win = st.number_input("Correlação",                 20, 504, 252)
-            st.caption("O Z-Score usa a média e a volatilidade acima. Janelas em pregões.")
-
-        with st.expander("⚡ Gatilhos de Sinal", expanded=False):
-            st.markdown("**🟡 Monitorar**")
-            z_monitor  = st.slider("|Z-Score| ≥",  0.5, 3.0, 1.10, 0.05)
-            dz_monitor = st.slider("Δz (1 pregão) ≥", 0.0, 0.5, 0.05, 0.01)
-            corr_min   = st.slider("Correlação ≥", 0.0, 1.0, 0.75, 0.05)
-            st.markdown("**🔴 Alerta Máximo**")
-            z_alert  = st.slider("|Z-Score| ≥ ", 0.5, 3.0, 1.50, 0.05)
-            dz_alert = st.slider("Δz (1 pregão) ≥ ", 0.0, 0.5, 0.15, 0.01)
-
-        with st.expander("🏁 Saída / Convergência", expanded=False):
-            z_exit   = st.slider("Convergência |Z| ≤", 0.0, 1.0, 0.40, 0.05)
-            max_hold = st.number_input("Máx. holding (pregões)", 5, 252, 63)
-
-        with st.expander("🔑 API", expanded=False):
-            api_key = st.text_input("Anthropic API Key", value=default_api_key, type="password", placeholder="sk-ant-...")
-
-@st.cache_data(ttl=30)
-def fetch(ticker, period, interval):
-    data = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
-    if data.empty:
-        return pd.Series(dtype=float, name=ticker)
-    close = data["Close"]
-    if isinstance(close, pd.DataFrame):
-        close = close.iloc[:, 0]
-    close.name = ticker
-    return close.dropna()
-
-def compute_ratio(long, short, use_log=True):
-    df = pd.concat([long, short], axis=1).dropna()
-    r = df.iloc[:, 0] / df.iloc[:, 1]
-    if use_log:
-        r = np.log(r)
-    return r
-
-def zscore(series, mean_win, vol_win):
-    m = series.rolling(mean_win).mean()
-    s = series.rolling(vol_win).std()
-    return (series - m) / s
-
-def hedge_ratio(long, short):
-    df = pd.concat([long, short], axis=1).dropna()
-    return float(np.polyfit(df.iloc[:, 1].values, df.iloc[:, 0].values, 1)[0])
-
-def cointegration_test(long, short):
-    df = pd.concat([long, short], axis=1).dropna()
-    _, p, _ = coint(df.iloc[:, 0], df.iloc[:, 1])
-    return p
-
-def adf_test(series):
-    return adfuller(series.dropna())[1]
-
-def rolling_corr(long, short, window):
-    df = pd.concat([long, short], axis=1).dropna()
-    return df.iloc[:, 0].rolling(window).corr(df.iloc[:, 1])
-
-def classify_signal(z, dz, corr, cfg, zero_cross=False):
-    """Classifica em 3 níveis: Alerta Máximo, Monitorar, Convergência ou Neutro.
-    Retorna (rótulo, classe_css, descrição)."""
-    az, adz = abs(z), abs(dz)
-    side = "SHORT ratio → vender LONG / comprar SHORT" if z > 0 else "LONG ratio → comprar LONG / vender SHORT"
-    cls  = "signal-short" if z > 0 else "signal-long"
-
-    # Convergência / saída tem prioridade
-    if az <= cfg["z_exit"] or zero_cross:
-        motivo = "cruzou o zero" if zero_cross and az > cfg["z_exit"] else f"|z| ≤ {cfg['z_exit']:.2f}"
-        return "CONVERGÊNCIA → encerrar / realizar", "signal-neutral", f"Zona de saída ({motivo})"
-
-    if az >= cfg["z_alert"] and adz >= cfg["dz_alert"] and corr >= cfg["corr_min"]:
-        return f"🔴 ALERTA MÁXIMO · {side}", cls, \
-               f"|z| ≥ {cfg['z_alert']:.2f} · Δz ≥ {cfg['dz_alert']:.2f} · corr ≥ {cfg['corr_min']:.2f}"
-
-    if az >= cfg["z_monitor"] and adz >= cfg["dz_monitor"] and corr >= cfg["corr_min"]:
-        return f"🟡 MONITORAR · {side}", cls, \
-               f"|z| ≥ {cfg['z_monitor']:.2f} · Δz ≥ {cfg['dz_monitor']:.2f} · corr ≥ {cfg['corr_min']:.2f}"
-
-    return "⚪ NEUTRO · aguardar", "signal-neutral", "Fora dos gatilhos de entrada"
-
-def analyze_with_claude(api_key, long_t, short_t, ratio, z, coint_p, adf_p, hedge, corr_last,
-                        mean_win=63, dz=0.0, cfg=None, use_log=True, sinal="—"):
-    client = anthropic.Anthropic(api_key=api_key)
-    cfg = cfg or {}
-    ratio_lbl = "log-ratio ln(L/S)" if use_log else "ratio L/S"
-    prompt = f"""Você é um analista quantitativo especialista em estratégias Long/Short (pairs trading) na B3.
-Analise o par {long_t} (LONG) x {short_t} (SHORT) com os dados abaixo e responda em português.
-
-Setup (parâmetros da estratégia):
-- {ratio_lbl}, janelas em pregões: média={mean_win}, z-score e volatilidade conforme configurado.
-- Monitorar: |z| ≥ {cfg.get('z_monitor', 1.10):.2f}, Δz ≥ {cfg.get('dz_monitor', 0.05):.2f}, corr ≥ {cfg.get('corr_min', 0.75):.2f}
-- Alerta Máximo: |z| ≥ {cfg.get('z_alert', 1.50):.2f}, Δz ≥ {cfg.get('dz_alert', 0.15):.2f}
-- Saída/convergência: |z| ≤ {cfg.get('z_exit', 0.40):.2f} ou cruzamento do zero; holding máx {cfg.get('max_hold', 63)} pregões.
-
-Situação atual:
-- {ratio_lbl} atual: {ratio.iloc[-1]:.4f} | Média ({mean_win}p): {ratio.rolling(mean_win).mean().iloc[-1]:.4f}
-- Z-Score atual: {z.iloc[-1]:.3f} | Δz (1 pregão): {dz:+.3f} | Máx: {z.max():.3f} | Mín: {z.min():.3f}
-- Cointegração p-valor: {coint_p:.4f} → {"✅ cointegrado" if coint_p < 0.05 else "❌ não cointegrado"}
-- ADF spread p-valor: {adf_p:.4f} → {"✅ estacionário" if adf_p < 0.05 else "❌ não estacionário"}
-- Hedge ratio (β): {hedge:.4f} | Correlação ({cfg.get('corr_win', 252)}p): {corr_last:.3f}
-- Sinal atual do sistema: {sinal}
-
-Estruture sua resposta em:
-1. Leitura do Z-Score e do Δz (o par está esticando ou revertendo?)
-2. Qualidade estatística (cointegração, correlação, estacionaridade)
-3. Sinal operacional — coerente com Monitorar / Alerta Máximo / Convergência acima?
-4. Riscos e checklist (liquidez, spread, aluguel, custo)
-5. Resumo executivo (2-3 linhas)"""
-    with client.messages.stream(model="claude-sonnet-4-6", max_tokens=1200,
-                                 messages=[{"role": "user", "content": prompt}]) as stream:
-        return stream.get_final_text()
-
-if mode == "📈 Long / Short":
-    # ---------- hero ----------
-    st.markdown(f"""
-    <div class="ls-hero">
-        <div>
-            <h1>📊 Long / Short Dashboard</h1>
-            <p>Ratio em tempo real · Z-Score · Cointegração · Análise via Claude AI</p>
-        </div>
-        <div class="ls-hero-pair">
-            <span class="chip chip-long">▲ LONG · {long_ticker or "—"}</span>
-            <span class="pair-x">×</span>
-            <span class="chip chip-short">▼ SHORT · {short_ticker or "—"}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    if auto_refresh:
-        time.sleep(30)
+    if st.button("⇄ inverter par", width="stretch"):
+        st.session_state["_do_swap"] = True
         st.rerun()
 
-    if run_btn:
-        st.session_state["ls_ran"] = True
-        st.session_state["ls_long"] = long_ticker
-        st.session_state["ls_short"] = short_ticker
+    period_label = st.selectbox("Histórico", list(PERIOD_MAP.keys()), index=2)
+    period = PERIOD_MAP[period_label]
 
-    already_ran = (
-        st.session_state.get("ls_ran")
-        and st.session_state.get("ls_long") == long_ticker
-        and st.session_state.get("ls_short") == short_ticker
-    )
+    run_btn = st.button("▶ Analisar", width="stretch", type="primary")
+    st.divider()
 
-    if not (run_btn or auto_refresh or already_ran):
-        st.markdown(
-            '<div class="empty-state">⚙️ Configure os ativos na barra lateral e clique em '
-            '<b>▶ Analisar</b> para carregar o par.</div>',
-            unsafe_allow_html=True,
+    # --- janelas -------------------------------------------------------------
+    with st.expander(f"Janelas · {SETUP_VALIDADO['mean_win']}/"
+                     f"{SETUP_VALIDADO['vol_win']}/{SETUP_VALIDADO['corr_win']}",
+                     expanded=False):
+        mean_win = st.number_input("Média do spread (pregões)", 5, 504,
+                                   SETUP_VALIDADO["mean_win"])
+        vol_win = st.number_input("Volatilidade (pregões)", 5, 504,
+                                  SETUP_VALIDADO["vol_win"])
+        corr_win = st.number_input("Correlação (pregões)", 20, 504,
+                                   SETUP_VALIDADO["corr_win"])
+        corr_basis = st.radio(
+            "Base da correlação",
+            ["returns", "levels"], index=0, horizontal=True,
+            format_func=lambda x: "log-retornos (correto)" if x == "returns"
+            else "níveis (legado)",
+            help="Correlação entre séries de preço em nível é espúria — mede "
+                 "tendência comum, não co-movimento.",
         )
-        st.stop()
+        if mean_win != vol_win:
+            st.warning(
+                "Janelas descasadas: o resultado deixa de ser um z-score "
+                "(numerador e denominador medem horizontes diferentes e a "
+                "variância não é 1). Os gatilhos foram calibrados em "
+                f"{SETUP_VALIDADO['mean_win']}/{SETUP_VALIDADO['vol_win']}."
+            )
 
-    if not long_ticker or not short_ticker:
-        st.error("Preencha os dois tickers antes de analisar.")
-        st.stop()
+    # --- gatilhos ------------------------------------------------------------
+    with st.expander("Gatilhos de sinal", expanded=False):
+        st.caption("Monitorar")
+        z_monitor = st.slider("|z| >=", 0.5, 3.0, SETUP_VALIDADO["z_monitor"], 0.05)
+        dz_monitor = st.slider("d|z| (1 pregão) >=", 0.0, 0.5,
+                               SETUP_VALIDADO["dz_monitor"], 0.01)
+        corr_min = st.slider("Correlação >=", 0.0, 1.0,
+                             SETUP_VALIDADO["corr_min"], 0.05)
+        st.caption("Alerta máximo")
+        z_alert = st.slider("|z| >= ", 0.5, 3.0, SETUP_VALIDADO["z_alert"], 0.05)
+        dz_alert = st.slider("d|z| (1 pregão) >= ", 0.0, 0.5,
+                             SETUP_VALIDADO["dz_alert"], 0.01)
 
-    with st.spinner(f"Baixando dados de {long_ticker} e {short_ticker}…"):
-        long_data  = fetch(long_ticker,  period, interval)
-        short_data = fetch(short_ticker, period, interval)
+    with st.expander("Saída / convergência", expanded=False):
+        z_exit = st.slider("Convergência |z| <=", 0.0, 1.0,
+                           SETUP_VALIDADO["z_exit"], 0.05)
+        max_hold = st.number_input("Máx. holding (pregões)", 5, 252,
+                                   SETUP_VALIDADO["max_hold"])
+        tem_posicao = st.checkbox(
+            "Tenho posição aberta neste par", value=False,
+            help="Sem posição, 'CONVERGÊNCIA -> encerrar' não faz sentido — o "
+                 "painel mostra 'SEM EDGE' em vez disso.")
 
-    if long_data.empty or short_data.empty:
-        st.error("Não foi possível baixar dados. Verifique os tickers.")
-        st.stop()
+    with st.expander("Custos", expanded=False):
+        cost_rt = st.number_input(
+            "Custo round-trip nas 2 pernas (%)", 0.0, 5.0,
+            core.CUSTO_RT_PADRAO * 100, 0.01,
+            help="Emolumentos + liquidação + corretagem + slippage.") / 100
+        rent_aa = st.number_input(
+            "Aluguel da perna short (% a.a.)", 0.0, 100.0,
+            core.ALUGUEL_AA_PADRAO * 100, 0.5,
+            help="Taxa BTC do papel. Use a taxa real, não a média — em papel "
+                 "apertado ela vai a dois dígitos e mata o par sozinha.") / 100
+        capital = st.number_input("Capital por perna (R$)", 1_000, 50_000_000,
+                                  100_000, 10_000)
 
-    cfg = {
-        "z_monitor": z_monitor, "dz_monitor": dz_monitor, "corr_min": corr_min,
-        "z_alert": z_alert, "dz_alert": dz_alert,
-        "z_exit": z_exit, "max_hold": max_hold, "corr_win": corr_win,
-    }
+    with st.expander("API", expanded=False):
+        api_key = st.text_input("Anthropic API Key",
+                                value=get_secret("ANTHROPIC_API_KEY", ""),
+                                type="password", placeholder="sk-ant-...")
 
-    ratio_series = compute_ratio(long_data, short_data, use_log)
-    z_series     = zscore(ratio_series, mean_win, vol_win)
-    corr_series  = rolling_corr(long_data, short_data, corr_win)
-    hedge        = hedge_ratio(long_data, short_data)
+    st.divider()
+    auto_refresh = st.toggle("Auto-refresh no pregão (60s)", value=False)
 
-    try:    coint_p = cointegration_test(long_data, short_data)
-    except: coint_p = 1.0
-    try:
-        spread = long_data - hedge * short_data
-        adf_p  = adf_test(spread)
-    except: adf_p = 1.0
+cfg = {"z_monitor": z_monitor, "dz_monitor": dz_monitor, "corr_min": corr_min,
+       "z_alert": z_alert, "dz_alert": dz_alert, "z_exit": z_exit,
+       "max_hold": max_hold, "corr_win": corr_win}
 
-    z_clean = z_series.dropna()
-    if z_clean.empty:
-        st.error(f"Janelas maiores que o histórico disponível. Reduza as janelas ou aumente o período.")
-        st.stop()
-    z_now    = float(z_clean.iloc[-1])
-    z_prev   = float(z_clean.iloc[-2]) if len(z_clean) > 1 else z_now
-    dz_now   = z_now - z_prev
-    zero_cross = (z_now == 0) or (z_prev != 0 and np.sign(z_now) != np.sign(z_prev))
-    corr_now = float(corr_series.dropna().iloc[-1]) if not corr_series.dropna().empty else 0.0
+# Aviso de drift: você está no setup validado ou em algo que mexeu semana passada?
+drift = [k for k, v in SETUP_VALIDADO.items()
+         if k in cfg and abs(cfg[k] - v) > 1e-9]
+if mean_win != SETUP_VALIDADO["mean_win"]:
+    drift.append(f"mean_win={mean_win}")
+if vol_win != SETUP_VALIDADO["vol_win"]:
+    drift.append(f"vol_win={vol_win}")
 
-    ratio_lbl = "Log-Ratio" if use_log else "Ratio"
+# =============================================================================
+# Commit: só o que afeta o cálculo pesado exige clique em Analisar
+# =============================================================================
+data_key = (long_in.strip(), short_in.strip(), period, mean_win, vol_win,
+            corr_win, corr_basis)
+if run_btn:
+    st.session_state["committed"] = data_key
+committed = st.session_state.get("committed")
 
-    # ---------- sinal em destaque ----------
-    sig, cls, sig_desc = classify_signal(z_now, dz_now, corr_now, cfg, zero_cross)
+if committed is None:
     st.markdown(
-        f'<div class="signal-banner {cls}">'
-        f'<span class="sb-label">⚡ {sig}</span>'
-        f'<span class="sb-desc">{sig_desc}</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+        '<div class="empty-state">Digite o par na barra lateral — só o ticker, '
+        'sem <b>.SA</b> — e clique em <b>Analisar</b>.</div>',
+        unsafe_allow_html=True)
+    st.stop()
 
-    # Checklist do Alerta Máximo
-    if sig.startswith("🔴"):
-        st.markdown("**Checklist Alerta Máximo — validar antes de executar:**")
-        chk1, chk2 = st.columns(2)
-        with chk1:
-            st.checkbox("Liquidez OK", key="chk_liq")
-            st.checkbox("Spread OK", key="chk_spread")
-        with chk2:
-            st.checkbox(f"Cointegração plausível (p={coint_p:.3f})", value=coint_p < 0.05, key="chk_coint")
-            st.checkbox("Aluguel OK / checado", key="chk_alug")
+stale = committed != data_key
 
-    # ---------- métricas-chave em cards ----------
-    z_tone    = "red" if z_now >= z_monitor else "green" if z_now <= -z_monitor else "neutral"
-    corr_ok   = corr_now >= corr_min
-    coint_ok  = coint_p < 0.05
-    adf_ok    = adf_p < 0.05
+try:
+    with st.spinner("Baixando e calculando..."):
+        lr, sr, al, ps = load_pair(*committed)
+except DataError as err:
+    st.error(err.message)
+    if err.retryable:
+        st.button("Tentar de novo")
+    st.stop()
+except ValueError as err:
+    st.error(str(err))
+    st.stop()
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.markdown(metric_card(ratio_lbl, f"{ratio_series.iloc[-1]:.4f}",
-                            f"média {mean_win}p: {ratio_series.rolling(mean_win).mean().iloc[-1]:.4f}",
-                            tone="purple"), unsafe_allow_html=True)
-    c2.markdown(metric_card("Z-Score", f"{z_now:.3f}",
-                            "vender ratio" if z_now >= z_monitor else "comprar ratio" if z_now <= -z_monitor else "zona neutra",
-                            tone=z_tone), unsafe_allow_html=True)
-    c3.markdown(metric_card("Δz · 1 pregão", f"{dz_now:+.3f}",
-                            "momentum do z-score", tone="neutral"), unsafe_allow_html=True)
-    c4.markdown(metric_card(f"Correlação {corr_win}p", f"{corr_now:.3f}",
-                            f"{'✅ OK' if corr_ok else '❌ Baixa'} · gatilho ≥ {corr_min:.2f}",
-                            tone="green" if corr_ok else "red"), unsafe_allow_html=True)
-    c5.markdown(metric_card("Cointegração p", f"{coint_p:.4f}",
-                            "✅ cointegrado" if coint_ok else "❌ fraco (p ≥ 0.05)",
-                            tone="green" if coint_ok else "red"), unsafe_allow_html=True)
-    c6.markdown(metric_card("ADF spread p", f"{adf_p:.4f}",
-                            "✅ estacionário" if adf_ok else "❌ fraco (p ≥ 0.05)",
-                            tone="green" if adf_ok else "red"), unsafe_allow_html=True)
+sig = core.classify(ps, cfg, tem_posicao=tem_posicao)
+L, S = html.escape(lr.display), html.escape(sr.display)
+hold_ref = ps.hl[0] if ps.hl and np.isfinite(ps.hl[0]) else max_hold
+z_be = core.breakeven_z(ps.sigma, cost_rt, rent_aa, hold_ref)
 
-    st.markdown("")
+# =============================================================================
+# Cabeçalho + sinal (um bloco só)
+# =============================================================================
+hoje = pd.Timestamp(datetime.now().date())
+atraso = int(np.busday_count(ps.last_date.date(), hoje.date()))
+if atraso <= 0:
+    badge = f'<span class="ls-meta">último pregão · {ps.last_date:%d/%m/%Y}</span>'
+elif atraso == 1:
+    badge = (f'<span class="ls-meta">fechamento de <b>{ps.last_date:%d/%m/%Y}</b>'
+             f' · D-1</span>')
+else:
+    badge = (f'<span class="ls-meta ls-stale">dado de {ps.last_date:%d/%m/%Y} '
+             f'· {atraso} pregões atrás</span>')
 
-    # ---------- conteúdo em abas ----------
-    tab_charts, tab_stats, tab_ai, tab_manual = st.tabs(
-        ["📊 Gráficos", "📋 Estatísticas", "🤖 Análise IA", "ℹ️ Manual"]
-    )
+dir_cls = "dir-long" if sig.side == "long_ratio" else ""
+side_txt = core.side_text(sig.side, L, S)
+side_html = f'<div class="sb-side">{side_txt}</div>' if side_txt else ""
+gates_html = "".join(
+    f'<span class="gate {"ok" if g.ok else "fail"}">'
+    f'<span class="g-mark">{"OK" if g.ok else "X"}</span> '
+    f'{g.nome} <b>{g.valor}</b> <span class="g-thr">{g.gatilho}</span></span>'
+    for g in sig.gates)
 
-    with tab_charts:
-        fig = make_subplots(rows=4, cols=1, shared_xaxes=True,
-            row_heights=[0.30, 0.25, 0.25, 0.20],
-            subplot_titles=["Preços normalizados (base 100)",
-                            f"{ratio_lbl} {long_ticker}/{short_ticker} · média {mean_win}p · bandas {vol_win}p",
-                            f"Z-Score ({mean_win}p/{vol_win}p)", f"Correlação rolling {corr_win}p"],
-            vertical_spacing=0.06)
+st.markdown(f"""
+<div class="ls-head">
+  <div class="ls-pair">
+    <span class="chip chip-long">LONG · {L}</span>
+    <span class="pair-x">x</span>
+    <span class="chip chip-short">SHORT · {S}</span>
+    {badge}
+  </div>
+  <div class="lv-{sig.level} {dir_cls}">
+    <div class="sb-label">{sig.label}</div>
+    {side_html}
+    <div class="sb-desc">{sig.desc}</div>
+  </div>
+  <div class="gates">{gates_html}</div>
+</div>
+""", unsafe_allow_html=True)
 
-        long_norm  = long_data  / long_data.iloc[0]  * 100
-        short_norm = short_data / short_data.iloc[0] * 100
-        fig.add_trace(go.Scatter(x=long_norm.index,  y=long_norm,  name=f"▲ {long_ticker}",  line=dict(color=C_LONG,  width=2)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=short_norm.index, y=short_norm, name=f"▼ {short_ticker}", line=dict(color=C_SHORT, width=2)), row=1, col=1)
+if stale:
+    st.warning("A configuração mudou desde o último cálculo. "
+               "Clique em **Analisar** para atualizar — os números abaixo "
+               "ainda são do par anterior.")
 
-        roll_mean = ratio_series.rolling(mean_win).mean()
-        roll_std  = ratio_series.rolling(vol_win).std()
-        fig.add_trace(go.Scatter(x=ratio_series.index, y=ratio_series, name=ratio_lbl, line=dict(color=C_ACCENT, width=2)), row=2, col=1)
-        fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean, name="Média", line=dict(color="#585b70", width=1, dash="dash")), row=2, col=1)
-        fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean + z_alert * roll_std,   name=f"+{z_alert:.2f}σ (alerta)",   line=dict(color=C_SHORT,   width=1, dash="dot")), row=2, col=1)
-        fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean + z_monitor * roll_std, name=f"±{z_monitor:.2f}σ (monitor)", line=dict(color=C_MONITOR, width=1, dash="dot")), row=2, col=1)
-        fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean - z_monitor * roll_std, showlegend=False, name=f"-{z_monitor:.2f}σ (monitor)", line=dict(color=C_MONITOR, width=1, dash="dot")), row=2, col=1)
-        fig.add_trace(go.Scatter(x=roll_mean.index, y=roll_mean - z_alert * roll_std,   name=f"-{z_alert:.2f}σ (alerta)",   line=dict(color=C_LONG,    width=1, dash="dot")), row=2, col=1)
+for note in [n for n in (lr.resolution_note, sr.resolution_note) if n]:
+    st.caption(note)
+for w in lr.warnings + sr.warnings + ps.problems:
+    st.warning(w)
+if al.pct_dropped >= 2:
+    st.warning(
+        f"Calendários diferentes: {al.n_dropped} pregões descartados "
+        f"({al.pct_dropped:.1f}% da amostra) por falta de negócio em um dos "
+        f"ativos. Estatísticas calculadas sobre {al.n_used} pregões.")
+if drift:
+    st.info("Parâmetros fora do setup validado do backtest: "
+            + ", ".join(str(d) for d in drift))
 
-        # verde = zona LONG ratio (z negativo) · vermelho = zona SHORT ratio (z positivo)
-        colors_z = [C_SHORT if v >= z_alert else C_MONITOR if v >= z_monitor else
-                    C_LONG if v <= -z_alert else C_TEAL if v <= -z_monitor else C_NEUTRAL
-                    for v in z_series.fillna(0)]
-        fig.add_trace(go.Bar(x=z_series.index, y=z_series, name="Z-Score", marker_color=colors_z, opacity=0.9), row=3, col=1)
-        for level, dash in [(z_alert, "solid"), (-z_alert, "solid"), (z_monitor, "dot"), (-z_monitor, "dot"), (z_exit, "dash"), (-z_exit, "dash")]:
-            fig.add_hline(y=level, line_dash=dash, line_color="#585b70", opacity=0.55, row=3, col=1)
-        fig.add_hline(y=0, line_color=C_TEXT, opacity=0.3, row=3, col=1)
+# checklist por par — chaves com o ticker, senão vaza entre pares
+if sig.level == "alert":
+    st.markdown("**Checklist do Alerta Máximo — validar antes de executar:**")
+    k = f"{lr.symbol}_{sr.symbol}"
+    q1, q2, q3, q4 = st.columns(4)
+    q1.checkbox("Liquidez OK", key=f"chk_liq_{k}")
+    q2.checkbox("Spread de tela OK", key=f"chk_spr_{k}")
+    q3.checkbox("Aluguel checado", key=f"chk_alu_{k}")
+    q4.checkbox("Sem evento societário", key=f"chk_evt_{k}")
 
-        fig.add_trace(go.Scatter(x=corr_series.index, y=corr_series, name="Correlação",
-            line=dict(color=C_YELLOW, width=2), fill="tozeroy", fillcolor="rgba(249,226,175,0.08)"), row=4, col=1)
-        fig.add_hline(y=corr_min, line_dash="dot", line_color=C_LONG, opacity=0.6, row=4, col=1)
 
-        style_fig(fig, height=800, top_margin=95, legend_y=1.05)
-        fig.update_annotations(font=dict(size=13, color=C_MUTED))
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+# =============================================================================
+# Métricas — 2 linhas de 3 (6 colunas truncavam os rótulos)
+# =============================================================================
+def pv(p, ok_txt, bad_txt):
+    if p is None:
+        return "n/d", "teste não pôde ser calculado", "na"
+    return f"{p:.4f}", (ok_txt if p < 0.05 else bad_txt), ("ok" if p < 0.05 else "weak")
 
-    with tab_stats:
-        st.markdown(f'<span class="fund-header">📋 Estatísticas do Spread</span>', unsafe_allow_html=True)
-        df_stats = pd.DataFrame({
-            "Métrica": [f"{ratio_lbl} atual", f"{ratio_lbl} médio ({mean_win}p)", "Z-Score atual", "Δz (1 pregão)",
-                        "Z-Score máx", "Z-Score mín", "Hedge ratio (β)", f"Correlação ({corr_win}p)",
-                        "Coint. p-valor", "ADF p-valor", "Holding máx (pregões)"],
-            "Valor":   [f"{ratio_series.iloc[-1]:.4f}", f"{ratio_series.rolling(mean_win).mean().iloc[-1]:.4f}",
-                        f"{z_now:.3f}", f"{dz_now:+.3f}",
-                        f"{z_series.max():.3f}", f"{z_series.min():.3f}", f"{hedge:.4f}", f"{corr_now:.3f}",
-                        f"{coint_p:.4f}", f"{adf_p:.4f}", f"{max_hold}"],
-            "Status":  ["—","—",
-                        "🔴 Vender ratio" if z_now >= z_monitor else "🟢 Comprar ratio" if z_now <= -z_monitor else "⚪ Neutro",
-                        "↗ esticando" if (dz_now > 0) == (z_now > 0) and abs(dz_now) >= dz_monitor else "↘ revertendo" if abs(dz_now) >= dz_monitor else "—",
-                        "—","—","—",
-                        "✅ OK" if corr_now >= corr_min else "❌ Baixa",
-                        "✅ Cointegrado" if coint_p < 0.05 else "❌ Não cointegrado",
-                        "✅ Estacionário" if adf_p < 0.05 else "❌ Não estacionário", "—"],
-        })
-        st.dataframe(df_stats, use_container_width=True, hide_index=True)
 
-    with tab_ai:
-        st.markdown('<span class="fund-header">🤖 Análise Claude AI</span>', unsafe_allow_html=True)
-        if not api_key:
-            st.warning("Insira sua Anthropic API Key na barra lateral (expander **🔑 API**) para ativar a análise via Claude.")
-        else:
-            analysis_key = f"claude_analysis_{long_ticker}_{short_ticker}"
-            if st.button("🧠 Gerar análise com Claude", type="secondary"):
-                with st.spinner("Claude analisando o par…"):
-                    try:
-                        result = analyze_with_claude(api_key, long_ticker, short_ticker,
-                                                     ratio_series, z_series, coint_p, adf_p, hedge, corr_now,
-                                                     mean_win=mean_win, dz=dz_now, cfg=cfg, use_log=use_log, sinal=sig)
-                        st.session_state[analysis_key] = result
-                    except anthropic.AuthenticationError:
-                        st.error("API Key inválida.")
-                    except Exception as e:
-                        st.error(f"Erro: {e}")
-            if analysis_key in st.session_state:
-                st.markdown(st.session_state[analysis_key])
+r1 = st.columns(3)
+r1[0].markdown(metric_card(
+    "Z-Score", f"{ps.z_now:+.3f}",
+    f"sigma do spread: {ps.sigma:.4f}", z_tone(ps.z_now, cfg)),
+    unsafe_allow_html=True)
 
-    with tab_manual:
-        st.markdown("""
-**📐 Log-Ratio** — `ln(preço LONG / preço SHORT)`. O log torna as variações simétricas (subir e cair têm o mesmo peso) e estabiliza a variância — padrão em pairs trading.
+mom = {True: "esticando", False: "revertendo", None: "parado"}[sig.esticando]
+r1[1].markdown(metric_card(
+    "d|z| · 1 pregão", f"{ps.dz_now:+.3f}",
+    f"{mom} · ruído de fundo {ps.dz_noise:.3f}", "accent"), unsafe_allow_html=True)
 
-**📊 Z-Score** — Distância do log-ratio em relação à média móvel (63 pregões), em desvios padrão (vol 63 pregões). Coração da estratégia.
+if ps.hl is None:
+    hl_v, hl_s, hl_t = "n/d", "amostra insuficiente", "na"
+elif not np.isfinite(ps.hl[0]):
+    hl_v, hl_s, hl_t = "infinita", "spread não reverte", "weak"
+else:
+    _hl, _lo, _hi = ps.hl
+    _hi_txt = "inf" if not np.isfinite(_hi) else f"{_hi:.0f}"
+    hl_v, hl_s = f"{_hl:.0f}p", f"IC 95%: {_lo:.0f}-{_hi_txt}p"
+    hl_t = "ok" if _hl <= max_hold else "weak"
+r1[2].markdown(metric_card("Meia-vida de reversão", hl_v, hl_s, hl_t),
+               unsafe_allow_html=True)
 
-**🔀 Δz (delta-z)** — Variação do Z-Score em 1 pregão. Confirma **momentum**: um |z| alto *com* Δz na mesma direção indica que o par ainda está esticando; Δz contrário sugere reversão a caminho.
+r2 = st.columns(3)
+if ps.corr_now is None:
+    cv, cs, ct = "n/d", f"janela {corr_win}p > histórico", "na"
+else:
+    base = "retornos" if corr_basis == "returns" else "níveis"
+    cv, cs = f"{ps.corr_now:.3f}", f"{base} · gatilho >= {corr_min:.2f}"
+    ct = "ok" if ps.corr_now >= corr_min else "weak"
+r2[0].markdown(metric_card(f"Correlação {corr_win}p", cv, cs, ct),
+               unsafe_allow_html=True)
 
-**🔗 Correlação (252 pregões)** — Sincronia de longo prazo entre os ativos. O gatilho exige **≥ 0,75** para operar.
+v, s_, t = pv(ps.coint_p, "cointegrado", "não cointegrado")
+r2[1].markdown(metric_card("Cointegração · p", v, s_, t), unsafe_allow_html=True)
 
-**🧪 Cointegração p-valor** — Teste Engle-Granger. p < 0,05 confirma relação estável de longo prazo (tendência a convergir).
+v, s_, t = pv(ps.adf_p, "spread estacionário", "spread não estacionário")
+r2[2].markdown(metric_card("ADF do spread · p", v, s_, t), unsafe_allow_html=True)
 
-**📉 ADF spread p** — Estacionaridade do spread. p < 0,05 = spread oscila em torno de média fixa.
+# edge líquido — o número que responde "esse sinal paga a conta?"
+edge = abs(ps.z_now) - z_exit - z_be
+st.markdown("")
+e1, e2 = st.columns([1, 2])
+e1.markdown(metric_card(
+    "Edge líquido", f"{edge:+.2f} z", f"break-even em {z_be:.2f} z",
+    "long" if edge > 0.30 else "short" if edge < 0 else "weak"),
+    unsafe_allow_html=True)
+with e2:
+    custo_total = cost_rt + rent_aa * hold_ref / 252
+    if z_be > z_exit:
+        st.error(
+            f"**A regra de saída não paga o custo.** O break-even é "
+            f"{z_be:.2f} z e você sai em |z| <= {z_exit:.2f} — sair nesse "
+            f"ponto é sair no zero a zero ou pior. Custo total considerado: "
+            f"{custo_total * 100:.2f}% do notional em {hold_ref:.0f} pregões.")
+    elif edge < 0:
+        st.warning(f"Amplitude disponível (|z| {abs(ps.z_now):.2f} até a saída "
+                   f"em {z_exit:.2f}) menor que o custo de {z_be:.2f} z.")
+    else:
+        st.success(f"Amplitude de {abs(ps.z_now) - z_exit:.2f} z contra custo "
+                   f"de {z_be:.2f} z — sobram {edge:.2f} z líquidos.")
 
-**⚖️ Hedge Ratio (β)** — Quanto do SHORT por unidade de LONG para neutralizar o risco de mercado.
+st.markdown("")
+
+# =============================================================================
+# Abas
+# =============================================================================
+tab_g, tab_e, tab_s, tab_ia, tab_m = st.tabs(
+    ["Gráficos", "Estatísticas", "Sizing", "Análise IA", "Manual"])
+
+with tab_g:
+    # Ordem: Z-Score primeiro. Antes ele nascia abaixo da dobra.
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True, row_heights=[0.40, 0.33, 0.27],
+        subplot_titles=[f"Z-Score ({mean_win}p / {vol_win}p)",
+                        f"Spread ln({L}) - ln({S}) · média {mean_win}p",
+                        "Preços normalizados (base 100)"],
+        vertical_spacing=0.08)
+
+    # 1) Z-Score — zonas como faixas, não 7 linhas horizontais
+    fig.add_trace(go.Bar(x=ps.z.index, y=ps.z, name="Z-Score",
+                         marker_color=z_bar_colors(ps.z, cfg),
+                         hovertemplate="z = %{y:.2f}<extra></extra>"),
+                  row=1, col=1)
+    zvals = ps.z.dropna()
+    zmax = float(np.nanmax(np.abs(zvals.values))) if len(zvals) else 3.0
+    top = max(zmax * 1.1, z_alert * 1.3)
+    fig.add_hrect(y0=z_alert, y1=top, fillcolor=rgba(C_SHORT, 0.07),
+                  layer="below", line_width=0, row=1, col=1)
+    fig.add_hrect(y0=-top, y1=-z_alert, fillcolor=rgba(C_LONG, 0.07),
+                  layer="below", line_width=0, row=1, col=1)
+    fig.add_hrect(y0=-z_exit, y1=z_exit, fillcolor=rgba(C_ACCENT, 0.10),
+                  layer="below", line_width=0, row=1, col=1)
+    fig.add_hline(y=0, line_color=C_GRAPHIC, opacity=0.8, row=1, col=1)
+    fig.add_hline(y=z_monitor, line_dash="dash", line_color=C_GRAPHIC,
+                  opacity=0.6, row=1, col=1)
+    fig.add_hline(y=-z_monitor, line_dash="dash", line_color=C_GRAPHIC,
+                  opacity=0.6, row=1, col=1)
+    fig.update_yaxes(range=[-top, top], row=1, col=1)
+
+    # 2) Spread + bandas (bandas fora da legenda: são autoevidentes)
+    roll_m = ps.spread.rolling(mean_win).mean()
+    roll_s = ps.spread.rolling(vol_win).std()
+    fig.add_trace(go.Scatter(x=ps.spread.index, y=ps.spread, name="Spread",
+                             line=dict(color=C_ACCENT, width=2)), row=2, col=1)
+    fig.add_trace(go.Scatter(x=roll_m.index, y=roll_m, name="Média",
+                             line=dict(color=C_GRAPHIC, width=1)), row=2, col=1)
+    for mult, color in ((z_alert, C_SHORT), (-z_alert, C_LONG)):
+        fig.add_trace(go.Scatter(x=roll_m.index, y=roll_m + mult * roll_s,
+                                 showlegend=False, hoverinfo="skip",
+                                 line=dict(color=color, width=1, dash="dot")),
+                      row=2, col=1)
+    for mult in (z_monitor, -z_monitor):
+        col = C_SHORT if mult > 0 else C_LONG
+        fig.add_trace(go.Scatter(x=roll_m.index, y=roll_m + mult * roll_s,
+                                 showlegend=False, hoverinfo="skip",
+                                 line=dict(color=rgba(col, 0.45), width=1,
+                                           dash="dash")),
+                      row=2, col=1)
+
+    # 3) Preços normalizados — normalizados DEPOIS do alinhamento
+    ln = ps.frame["long"] / ps.frame["long"].iloc[0] * 100
+    sn = ps.frame["short"] / ps.frame["short"].iloc[0] * 100
+    fig.add_trace(go.Scatter(x=ln.index, y=ln, name=f"LONG {L}",
+                             line=dict(color=C_LONG, width=2)), row=3, col=1)
+    # dash na perna SHORT: sob deuteranopia as duas cores convergem
+    fig.add_trace(go.Scatter(x=sn.index, y=sn, name=f"SHORT {S}",
+                             line=dict(color=C_SHORT, width=2, dash="dot")),
+                  row=3, col=1)
+
+    style_fig(fig, height=620, top_margin=70)
+    fig.update_annotations(font=dict(size=13, color=C_MUTED))
+    st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG)
+
+    st.caption("Faixas: vermelha = zona de venda do ratio · verde = zona de "
+               "compra · roxa = banda de saída. Tracejado = monitorar, "
+               "pontilhado = alerta.")
+
+with tab_e:
+    ca, cb = st.columns(2)
+    with ca:
+        st.markdown("**Estatísticas do spread canônico**")
+        st.dataframe(pd.DataFrame({
+            "Métrica": ["Spread atual", f"Média ({mean_win}p)", "sigma do spread",
+                        "Z-Score", "d|z| (1 pregão)", "Z máx", "Z mín",
+                        "Meia-vida", "beta OLS em log (informativo)",
+                        f"Correlação ({corr_win}p)", "Cointegração p",
+                        "ADF do spread p", "Pregões usados"],
+            "Valor": [f"{ps.ratio_now:.4f}", f"{ps.ratio_mean:.4f}",
+                      f"{ps.sigma:.4f}", f"{ps.z_now:+.3f}", f"{ps.dz_now:+.3f}",
+                      f"{ps.z.max():.3f}", f"{ps.z.min():.3f}",
+                      hl_v, f"{ps.beta_now:.3f}",
+                      "n/d" if ps.corr_now is None else f"{ps.corr_now:.3f}",
+                      "n/d" if ps.coint_p is None else f"{ps.coint_p:.4f}",
+                      "n/d" if ps.adf_p is None else f"{ps.adf_p:.4f}",
+                      f"{ps.n_obs}"],
+        }), width="stretch", hide_index=True)
+
+        nota_beta = ("O beta é **informativo**: o sinal, o teste e o sizing "
+                     "usam beta = 1 (notional-neutro).")
+        if len(ps.beta_roll) > 20:
+            br = ps.beta_roll.tail(252)
+            nota_beta += (f" Faixa do beta rolante em 12 meses: "
+                          f"{br.min():.2f}-{br.max():.2f} — ele muda sozinho "
+                          f"conforme você troca o seletor de histórico.")
+        st.caption(nota_beta)
+
+    with cb:
+        st.markdown("**Frequência empírica dos gatilhos neste par**")
+        st.dataframe(pd.DataFrame({
+            "Gatilho": [f"Monitorar |z| >= {z_monitor:.2f}",
+                        f"Alerta |z| >= {z_alert:.2f}",
+                        f"Saída |z| <= {z_exit:.2f}"],
+            "Dispara em": [f"{core.z_frequency(ps.z, z_monitor):.1%} dos pregões",
+                           f"{core.z_frequency(ps.z, z_alert):.1%} dos pregões",
+                           f"{1 - core.z_frequency(ps.z, z_exit):.1%} dos pregões"],
+        }), width="stretch", hide_index=True)
+        st.caption(
+            f"sigma do z neste par: **{ps.z.std():.2f}** — o z de janela "
+            f"rolante não é normal padrão. Um limiar fixo em sigma dispara com "
+            f"frequência diferente em cada par: leia a frequência, não o número.")
+
+        st.markdown("**Correlação rolante**")
+        cf = go.Figure()
+        cf.add_trace(go.Scatter(x=ps.corr.index, y=ps.corr, name="Correlação",
+                                line=dict(color=C_STAT_OK, width=2)))
+        cf.add_hline(y=corr_min, line_dash="dot", line_color=C_GRAPHIC, opacity=0.7)
+        cmin = float(ps.corr.min()) if len(ps.corr.dropna()) else -0.2
+        cf.update_yaxes(range=[max(-1.0, cmin - 0.1), 1.0])
+        style_fig(cf, height=220, top_margin=20, show_legend=False)
+        st.plotly_chart(cf, width="stretch", config=PLOTLY_CONFIG)
+
+with tab_s:
+    sz = core.sizing(ps.frame, capital)
+    st.markdown(f"**Sizing notional-neutro (beta = 1), lotes de 100 — "
+                f"capital de R$ {capital:,.0f} por perna**".replace(",", "."))
+    g1, g2, g3 = st.columns(3)
+    g1.markdown(metric_card(
+        f"LONG · {L}", f"{sz['q_long']}",
+        f"x R$ {sz['p_long']:.2f} = R$ {sz['fin_long']:,.0f}".replace(",", "."),
+        "long"), unsafe_allow_html=True)
+    g2.markdown(metric_card(
+        f"SHORT · {S}", f"{sz['q_short']}",
+        f"x R$ {sz['p_short']:.2f} = R$ {sz['fin_short']:,.0f}".replace(",", "."),
+        "short"), unsafe_allow_html=True)
+    g3.markdown(metric_card(
+        "Resíduo de lote", f"R$ {sz['residuo']:,.0f}".replace(",", "."),
+        f"{sz['residuo_pct']:+.2%} do capital — exposição direcional",
+        "weak" if abs(sz["residuo_pct"]) > 0.02 else "ok"), unsafe_allow_html=True)
+
+    st.caption("O resíduo de arredondamento de lote é exposição direcional "
+               "real. Em papel caro ele fica grande e normalmente ninguém "
+               "percebe.")
+
+    st.markdown("**Decomposição do custo**")
+    st.dataframe(pd.DataFrame({
+        "Componente": ["Round-trip nas 2 pernas",
+                       f"Aluguel ({hold_ref:.0f} pregões)",
+                       "Custo total", "sigma do spread", "z de break-even"],
+        "Valor": [f"{cost_rt:.2%}", f"{rent_aa * hold_ref / 252:.2%}",
+                  f"{cost_rt + rent_aa * hold_ref / 252:.2%}",
+                  f"{ps.sigma:.4f}", f"{z_be:.2f} z"],
+    }), width="stretch", hide_index=True)
+
+with tab_ia:
+    if not api_key:
+        st.info("Adicione sua Anthropic API Key no expander **API** da barra "
+                "lateral para ativar a análise.")
+    else:
+        # o hash inclui os gatilhos: a análise antiga citava parâmetros que
+        # você já tinha mudado, como se fossem os atuais
+        akey = f"ia_{lr.symbol}_{sr.symbol}_{hash(frozenset(cfg.items()))}_{period}"
+        if st.button("Gerar análise com Claude", type="secondary"):
+            with st.spinner("Claude analisando o par..."):
+                try:
+                    st.session_state[akey] = core.analyze_with_claude(
+                        api_key, L, S, ps, sig, cfg, z_be)
+                    st.session_state[akey + "_ts"] = datetime.now()
+                except Exception as e:
+                    st.error(f"Erro na chamada à API: {e}")
+        if akey in st.session_state:
+            ts = st.session_state.get(akey + "_ts")
+            if ts:
+                st.caption(f"Gerada em {ts:%d/%m/%Y %H:%M} com |z| >= "
+                           f"{z_alert:.2f} · corr >= {corr_min:.2f}")
+            st.markdown(st.session_state[akey])
+
+with tab_m:
+    st.markdown(f"""
+### Especificação canônica
+
+O painel usa **um único spread** para tudo — sinal, teste estatístico, gráfico
+e dimensionamento:
+
+    spread = ln({L}) - ln({S})
+
+Isso é **beta = 1 imposto**: posição *notional-neutra*, mesmo valor financeiro
+em cada perna. O beta OLS aparece na aba Estatísticas como número
+**informativo** e não entra em lugar nenhum do cálculo.
+
+### As métricas
+
+**Z-Score** — distância do spread em relação à média de {mean_win} pregões, em
+desvios de {vol_win} pregões. Coração da estratégia.
+
+**d|z|** — variação do **módulo** do z em 1 pregão: `|z_t| − |z_t-1|`. O gate é
+**unilateral** (`>= {dz_monitor:.2f}`), então só passa quando o par está
+*esticando*. Isso é fiel à família I do backtest — não é `|Δz|`, que aceitaria
+também um par revertendo, trade economicamente oposto. Atenção: d|z| mistura o
+movimento de hoje com o efeito da janela *descartando* a observação de
+{mean_win} pregões atrás. O card mostra o **ruído de fundo**
+({ps.dz_noise:.3f} neste par) — um gatilho abaixo desse valor é ruído, não
+momentum.
+
+**Meia-vida de reversão** — quanto tempo o spread leva para percorrer metade do
+caminho de volta à média. É o número que responde *quanto tempo meu capital
+fica preso*. Leia o **intervalo de confiança**, não o ponto: o estimador é
+enviesado para baixo em meias-vidas longas.
+
+**Correlação ({corr_win}p)** — sobre **log-retornos**, não sobre níveis de
+preço, exatamente como no backtest (`corr(dln L, dln S)`). Correlação entre
+séries de preço em nível é espúria: mede tendência comum. Medido em
+PETR4×VALE3: 0,77 em níveis contra −0,08 em retornos. O gatilho de
+{SETUP_VALIDADO['corr_min']:.2f} é restritivo de propósito.
+
+**Cointegração p** — Engle-Granger sobre log-preços, com os valores críticos
+corretos para o teste.
+
+**ADF do spread p** — Dickey-Fuller sobre o próprio spread canônico. É legítimo
+usar `adfuller` aqui **porque beta = 1 foi imposto, não estimado**.
+
+**z de break-even** — custo total (round-trip nas duas pernas + aluguel no
+holding) convertido para unidades de z. Responde *esse sinal paga a conta?*.
+Se o break-even for maior que a banda de saída, sair em |z| <= {z_exit:.2f} é
+sair no zero a zero.
 
 ---
-**⚡ Níveis de Sinal (setup do backtest — meanWin 63 / volWin 63 / corrWin 252 / maxHold 63):**
+### Níveis de sinal
 
-- **🟡 Monitorar** — `|z| ≥ 1,10` · `Δz ≥ 0,05` · `corr ≥ 0,75`. Par entrando em zona operável; acompanhar de perto.
-- **🔴 Alerta Máximo** — `|z| ≥ 1,50` · `Δz ≥ 0,15` · `corr ≥ 0,75` + checklist (liquidez, spread, cointegração, aluguel). Sinal forte de entrada.
-- **⚪ Convergência / Saída** — `|z| ≤ 0,40` **ou** cruzamento do zero. Encerrar / realizar. Holding máximo: **63 pregões**.
+- **Monitorar** — `|z| >= {z_monitor:.2f}` · `d|z| >= {dz_monitor:.2f}` ·
+  `corr >= {corr_min:.2f}`
+- **Alerta máximo** — `|z| >= {z_alert:.2f}` · `d|z| >= {dz_alert:.2f}` ·
+  `corr >= {corr_min:.2f}` + checklist
+- **Saída** — `|z| <= {z_exit:.2f}` ou {max_hold} pregões de holding. Sem stop
+  e sem saída por cruzamento do zero — igual ao backtest.
 
-> ⚠️ Rodar inicialmente em **produção sombra** antes de execução real. Validar custos, aluguel, spread, slippage e walk-forward.
-        """)
+Quando o sinal é NEUTRO, a tríade de check no topo mostra **qual condição
+falhou** — não só que o conjunto não passou.
 
-    st.caption(f"Dados via Yahoo Finance · Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+Conferido linha a linha contra `run_jarvis_pair()` do `research_ls_b3`
+(família I), que foi a configuração levada ao teste cego de 2024+.
+
+### O que o painel ainda não modela
+
+O backtest tem duas regras que este painel não implementa:
+
+1. **Exclusão por perdas** — 3 trades com PnL líquido negativo consecutivos no
+   mesmo par bloqueiam o par; a reabilitação exige 2 convergências virtuais
+   consecutivas. Isso exige histórico de trades por par.
+2. **Elegibilidade point-in-time** — ADTV de 60 dias >= R$ 1M nas duas pernas
+   no dia do sinal, com tiers de slippage por faixa de ADTV (10/20/40 bps).
+   Aqui o custo é um parâmetro único que você informa.
+
+> Rodar em produção sombra antes de execução real. Registrar cada sinal
+> emitido é a única amostra out-of-sample limpa que ainda pode existir.
+    """)
+
+st.caption(f"Dados via Yahoo Finance · último pregão {ps.last_date:%d/%m/%Y} · "
+           f"página renderizada {datetime.now():%H:%M:%S}")
+
+# Auto-refresh no FIM do script — antes ele ficava ANTES de todo o cálculo,
+# então o app dormia 30s e reiniciava sem nunca renderizar nada.
+if auto_refresh:
+    agora = datetime.now(TZ_BR)
+    if agora.weekday() < 5 and 10 <= agora.hour < 19:
+        time.sleep(60)
+        st.rerun()
+    else:
+        st.caption("Auto-refresh pausado fora do pregão.")

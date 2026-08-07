@@ -1,3 +1,5 @@
+# Fonte da verdade das cores base. O restante do design system vive em
+# theme.py — não duplique valores aqui.
 [theme]
 base = "dark"
 primaryColor = "#cba6f7"
@@ -7,4 +9,5 @@ textColor = "#cdd6f4"
 
 [server]
 headless = true
-enableCORS = false
+# enableCORS = false foi removido: é incompatível com enableXsrfProtection
+# (padrão true) e o Streamlit o sobrescrevia com um aviso a cada boot.
