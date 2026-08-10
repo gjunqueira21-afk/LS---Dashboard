@@ -54,7 +54,16 @@ def rgba(hex_color: str, alpha: float) -> str:
 
 CSS = f"""
 <style>
-    .block-container {{ padding-top: 1.2rem; padding-bottom: 2.5rem; }}
+    /* O header do Streamlit (stHeader) e FIXO com sizes.headerHeight = 3.75rem
+       (60px) e carrega o menu e o botao Deploy no canto superior direito.
+       Reduzir o padding joga o conteudo POR BAIXO dele e o texto aparece
+       cortado. 4.5rem e o valor que o proprio Streamlit usa no modo compacto
+       com header; 3.5rem ainda passava 4px por baixo.
+       A formula do padding nao olha `layout`, entao wide e centered usam o
+       mesmo numero — desktop e mobile ficam iguais. */
+    .block-container {{ padding-top: 4.5rem; padding-bottom: 2.5rem; }}
+    /* Fundo solido no header para nada aparecer por baixo dele ao rolar. */
+    header[data-testid="stHeader"] {{ background: {C_BASE}; }}
     h1, h2, h3 {{ letter-spacing: -0.02em; }}
 
     /* ---------- escala tipográfica: 6 degraus, não 13 ---------- */
@@ -67,6 +76,9 @@ CSS = f"""
         background: {rgba(C_LINE, 0.35)};
         box-shadow: 0 4px 14px rgba(0,0,0,0.22);
     }}
+    /* Config alterada e ainda nao recalculada: o bloco inteiro esmaece, para
+       nao se ler um "ALERTA MAXIMO" que e do par anterior. */
+    .ls-head.is-stale {{ opacity: 0.5; filter: saturate(0.5); }}
     .ls-pair {{
         display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
         margin-bottom: 10px;
@@ -79,36 +91,43 @@ CSS = f"""
                    border: 1px solid {rgba(C_LONG, 0.45)}; }}
     .chip-short {{ background: {rgba(C_SHORT, 0.10)}; color: {C_SHORT};
                    border: 1px solid {rgba(C_SHORT, 0.45)}; }}
-    .pair-x   {{ color: {C_GRAPHIC}; font-weight: 800; font-size: 1rem; }}
-    .ls-meta  {{ color: {C_MUTED}; font-size: 0.875rem; margin-left: auto; }}
+    /* C_GRAPHIC e token de objeto grafico (3:1), nao de glifo. */
+    .pair-x   {{ color: {C_SUBTLE}; font-weight: 800; font-size: 1rem; }}
+    /* Em linha propria, alinhado a esquerda. Com margin-left:auto ele ia para
+       o canto superior DIREITO — debaixo dos botoes do header do Streamlit. */
+    .ls-meta  {{ display: block; color: {C_MUTED}; font-size: 0.875rem;
+                 margin: 0 0 10px; }}
     .ls-stale {{ color: {C_SHORT}; font-weight: 700; }}
 
     /* ---------- sinal: a informação mais importante, com o maior peso ------ */
     .sb-label {{ font-size: 1.75rem; font-weight: 800; line-height: 1.15;
                  color: {C_TEXT}; }}
     .sb-side  {{ font-size: 1rem; color: {C_MUTED}; margin-top: 2px; }}
-    .sb-desc  {{ font-size: 0.875rem; color: {C_SUBTLE}; margin-top: 4px; }}
+    /* C_SUBTLE sobre o fundo composto do .lv-alert (#423346) da 4,17:1 e
+       reprova AA em 14px. C_MUTED da 5,30:1. */
+    .sb-desc  {{ font-size: 0.875rem; color: {C_MUTED}; margin-top: 4px; }}
 
     /* nível codificado por borda + fundo, não só pelo emoji dentro do texto */
-    .lv-alert {{ border-left: 5px solid {C_SHORT}; padding-left: 14px;
+    /* padding vertical: so com padding-left o fundo colorido cola no texto. */
+    .lv-alert {{ border-left: 5px solid {C_SHORT}; padding: 10px 14px;
                  background: {rgba(C_SHORT, 0.14)}; border-radius: 0 10px 10px 0; }}
     .lv-alert.dir-long {{ border-left-color: {C_LONG};
                           background: {rgba(C_LONG, 0.14)}; }}
     .lv-alert .sb-label {{ color: {C_SHORT}; }}
     .lv-alert.dir-long .sb-label {{ color: {C_LONG}; }}
 
-    .lv-watch {{ border-left: 3px solid {rgba(C_SHORT, 0.55)}; padding-left: 14px;
+    .lv-watch {{ border-left: 3px solid {rgba(C_SHORT, 0.55)}; padding: 10px 14px;
                  background: {rgba(C_SHORT, 0.06)}; border-radius: 0 10px 10px 0; }}
     .lv-watch.dir-long {{ border-left-color: {rgba(C_LONG, 0.55)};
                           background: {rgba(C_LONG, 0.06)}; }}
     .lv-watch .sb-label {{ color: {C_SHORT}; }}
     .lv-watch.dir-long .sb-label {{ color: {C_LONG}; }}
 
-    .lv-exit  {{ border-left: 3px solid {C_ACCENT}; padding-left: 14px;
+    .lv-exit  {{ border-left: 3px solid {C_ACCENT}; padding: 10px 14px;
                  background: {rgba(C_ACCENT, 0.08)}; border-radius: 0 10px 10px 0; }}
     .lv-exit .sb-label {{ color: {C_ACCENT}; }}
 
-    .lv-flat  {{ border-left: 3px solid {C_FLAT}; padding-left: 14px;
+    .lv-flat  {{ border-left: 3px solid {C_FLAT}; padding: 10px 14px;
                  background: {rgba(C_FLAT, 0.20)}; border-radius: 0 10px 10px 0; }}
     .lv-flat .sb-label {{ color: {C_MUTED}; }}
 
@@ -133,10 +152,24 @@ CSS = f"""
         border-radius: 12px; padding: 12px 14px; height: 100%;
         box-shadow: 0 2px 8px rgba(0,0,0,0.18);
     }}
+    /* height:100% no card so funciona se a cadeia de wrappers do Streamlit
+       tambem esticar — stColumn estica, mas os divs internos sao `auto`,
+       e height:100% contra pai auto computa auto. Sem isso os cards ficam
+       com fundos de altura irregular. */
+    div[data-testid="stColumn"] > div,
+    div[data-testid="stColumn"] div[data-testid="stVerticalBlock"],
+    div[data-testid="stColumn"] div[data-testid="stElementContainer"]:has(.metric-card),
+    div[data-testid="stColumn"] div[data-testid="stMarkdown"]:has(.metric-card),
+    div[data-testid="stColumn"] div[data-testid="stMarkdownContainer"]:has(.metric-card)
+        {{ height: 100%; }}
+
+    /* min-height e relativo ao proprio font-size: 2.1em de 12px = 25,2px, mas
+       uma linha com line-height 1.6 ja mede 19,2px e duas medem 38,4px — o
+       rotulo de 2 linhas estourava 13px. line-height fixo resolve. */
     .metric-label {{
         font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
         letter-spacing: 0.06em; color: {C_MUTED};
-        white-space: normal; min-height: 2.1em;
+        white-space: normal; line-height: 1.25; min-height: 2.5em;
     }}
     .metric-value {{
         font-size: 1.25rem; font-weight: 700; color: {C_TEXT};
@@ -144,7 +177,7 @@ CSS = f"""
     }}
     .metric-sub {{
         font-size: 0.75rem; color: {C_SUBTLE}; margin-top: 2px;
-        min-height: 1.4em; white-space: nowrap;
+        line-height: 1.35; min-height: 1.35em; white-space: nowrap;
         overflow: hidden; text-overflow: ellipsis;
     }}
     .metric-card.tone-long  {{ border-left-color: {C_LONG}; }}
@@ -154,6 +187,9 @@ CSS = f"""
     .metric-card.tone-accent {{ border-left-color: {C_ACCENT}; }}
     .metric-card.tone-ok    {{ border-left-color: {C_STAT_OK}; }}
     .metric-card.tone-weak  {{ border-left-color: {C_STAT_WEAK}; }}
+    /* "aprovado" que NAO e direcao: verde ja significa long nesta tela. */
+    .metric-card.tone-pass  {{ border-left-color: {C_STAT_OK}; }}
+    .metric-card.tone-pass  .metric-value {{ color: {C_STAT_OK}; }}
     .metric-card.tone-na    {{ border-left-color: {C_GRAPHIC}; }}
     .metric-card.tone-na    .metric-value {{ color: {C_SUBTLE}; }}
 
@@ -174,14 +210,11 @@ CSS = f"""
     .stTabs [aria-selected="true"] {{
         color: {C_ACCENT} !important; background: {rgba(C_ACCENT, 0.08)};
     }}
-    div[data-testid="stMetric"] {{
-        background: {C_RAISED}; border: 1px solid {C_LINE};
-        border-radius: 12px; padding: 12px 14px;
-    }}
-    div[data-testid="stMetric"] label {{ color: {C_MUTED} !important; }}
+    /* overflow visible: com hidden o balao de valor do slider era cortado, e
+       todos os sliders de gatilho vivem dentro de expanders. */
     div[data-testid="stExpander"] {{
         border: 1px solid {C_LINE}; border-radius: 10px;
-        background: {rgba(C_LINE, 0.25)}; overflow: hidden;
+        background: {rgba(C_LINE, 0.25)}; overflow: visible;
     }}
     div[data-testid="stDataFrame"] {{
         border: 1px solid {C_LINE}; border-radius: 12px; overflow: hidden;
@@ -220,9 +253,9 @@ def z_tone(z: float, cfg: dict) -> str:
     e o gráfico cortava em ±z_alert com 5. Com z = +1,2 o card ficava vermelho
     e a barra ficava laranja, na mesma tela.
     """
-    if z >= cfg["z_alert"] or z >= cfg["z_monitor"]:
+    if z >= cfg["z_monitor"]:
         return "short"
-    if z <= -cfg["z_alert"] or z <= -cfg["z_monitor"]:
+    if z <= -cfg["z_monitor"]:
         return "long"
     return "neutral"
 
@@ -268,8 +301,12 @@ def style_fig(fig, height: int, top_margin: int = 60, show_legend: bool = True,
         showlegend=show_legend,
         margin=dict(l=8, r=8, t=top_margin, b=10),
     )
+    # automargin: com margin l=8 e automargin False (padrao), rotulos de eixo
+    # como "-2.5" ou "0.4523" (~35px) sao clipados na borda do SVG.
     fig.update_xaxes(gridcolor=C_LINE, zerolinecolor=C_LINE, linecolor=C_LINE,
+                     automargin=True,
                      showspikes=True, spikemode="across", spikesnap="cursor",
                      spikecolor=C_GRAPHIC, spikethickness=1)
-    fig.update_yaxes(gridcolor=C_LINE, zerolinecolor=C_LINE, linecolor=C_LINE)
+    fig.update_yaxes(gridcolor=C_LINE, zerolinecolor=C_LINE, linecolor=C_LINE,
+                     automargin=True)
     return fig

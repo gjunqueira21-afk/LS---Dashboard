@@ -29,11 +29,12 @@ st.set_page_config(page_title="LS Mobile", page_icon="📱",
 st.markdown(theme.CSS, unsafe_allow_html=True)
 st.markdown("""
 <style>
-    .block-container { padding-top: 0.8rem; padding-bottom: 3rem; max-width: 640px; }
+    /* padding-top NAO pode encolher: o header fixo do Streamlit cobre o topo. */
+    .block-container { padding-top: 3.25rem; padding-bottom: 3rem; max-width: 640px; }
     .stButton button { height: 3rem; font-size: 1.05rem; border-radius: 12px; }
     .sb-label { font-size: 1.5rem; }
     .ls-head { padding: 14px 16px; }
-    .ls-meta { margin-left: 0; width: 100%; }
+    .ls-meta { margin-bottom: 8px; }
     .gates { gap: 8px; }
     .gate { font-size: 0.8125rem; padding: 3px 8px; }
     /* alvos de toque maiores nos steppers */
@@ -88,13 +89,15 @@ with c4:
 run = st.button("Analisar", width="stretch", type="primary")
 
 # --- avançado, fora do caminho -----------------------------------------------
-with st.expander("Avançado — janelas e gatilhos"):
-    st.caption("Janelas (pregões)")
-    j1, j2, j3 = st.columns(3)
-    mean_win = j1.number_input("Média", 5, 504, SETUP_VALIDADO["mean_win"])
-    vol_win = j2.number_input("Vol", 5, 504, SETUP_VALIDADO["vol_win"])
-    corr_win = j3.number_input("Corr", 20, 504, SETUP_VALIDADO["corr_win"])
+# Janelas ficam FORA do celular de propósito: ninguém recalibra janela de
+# volatilidade no metrô. É trabalho de desktop; aqui usa-se o setup validado.
+mean_win = SETUP_VALIDADO["mean_win"]
+vol_win = SETUP_VALIDADO["vol_win"]
+corr_win = SETUP_VALIDADO["corr_win"]
 
+with st.expander("Avançado — gatilhos"):
+    st.caption(f"Janelas fixas no setup validado: {mean_win}/{vol_win}/"
+               f"{corr_win} pregões. Para alterar, use o desktop.")
     st.caption("Monitorar")
     m1, m2, m3 = st.columns(3)
     z_monitor = m1.number_input("|z|>=", 0.1, 3.0, SETUP_VALIDADO["z_monitor"], 0.05)
@@ -118,6 +121,8 @@ with st.expander("Custos e API"):
                               core.CUSTO_RT_PADRAO * 100, 0.01) / 100
     rent_aa = st.number_input("Aluguel short (% a.a.)", 0.0, 100.0,
                               core.ALUGUEL_AA_PADRAO * 100, 0.5) / 100
+    capital = st.number_input("Capital por perna (R$)", 1_000, 50_000_000,
+                              100_000, 10_000)
     api_key = st.text_input("Anthropic API Key",
                             value=get_secret("ANTHROPIC_API_KEY", ""),
                             type="password", placeholder="sk-ant-... (opcional)")
@@ -142,14 +147,22 @@ try:
         lr, sr, al, ps = load_pair(*committed)
 except DataError as err:
     st.error(err.message)
+    if err.retryable:
+        st.button("Tentar de novo", width="stretch")
     st.stop()
 except ValueError as err:
     st.error(str(err))
     st.stop()
 
+# Parâmetros EFETIVOS do cálculo, nunca os widgets (divergem em estado stale).
+mean_win, vol_win = ps.mean_win, ps.vol_win
+corr_win, corr_basis = ps.corr_win, ps.corr_basis
+cfg["corr_win"] = ps.corr_win
+
 sig = core.classify(ps, cfg, tem_posicao=tem_posicao)
 L, S = html.escape(lr.display), html.escape(sr.display)
-hold_ref = ps.hl[0] if ps.hl and np.isfinite(ps.hl[0]) else max_hold
+# Aluguel só corre até o holding máximo — sem o teto, z_be inflava ~3x.
+hold_ref = min(ps.hl[0], max_hold) if ps.hl and np.isfinite(ps.hl[0]) else max_hold
 z_be = core.breakeven_z(ps.sigma, cost_rt, rent_aa, hold_ref)
 
 if committed != data_key:
@@ -181,7 +194,7 @@ st.markdown(f"""
     <span class="pair-x">x</span>
     <span class="chip chip-short">SHORT {S}</span>
   </div>
-  <div style="margin-bottom:8px">{badge}</div>
+  {badge}
   <div class="lv-{sig.level} {dir_cls}">
     <div class="sb-label">{sig.label}</div>
     {side_html}
@@ -203,10 +216,21 @@ if al.pct_dropped >= 2:
 if sig.level == "alert":
     st.markdown("**Checklist antes de executar:**")
     k = f"{lr.symbol}_{sr.symbol}"
-    st.checkbox("Liquidez OK", key=f"m_liq_{k}")
-    st.checkbox("Spread de tela OK", key=f"m_spr_{k}")
-    st.checkbox("Aluguel checado", key=f"m_alu_{k}")
-    st.checkbox("Sem evento societário", key=f"m_evt_{k}")
+    c_ok = [
+        st.checkbox("Liquidez OK", key=f"m_liq_{k}"),
+        st.checkbox("Spread de tela OK", key=f"m_spr_{k}"),
+        st.checkbox("Aluguel checado", key=f"m_alu_{k}"),
+        st.checkbox("Sem evento societário", key=f"m_evt_{k}"),
+    ]
+    if all(c_ok):
+        _sz = core.sizing(ps.frame, capital)
+        _l = "vender" if sig.side == "short_ratio" else "comprar"
+        _s = "comprar" if sig.side == "short_ratio" else "vender"
+        st.success(
+            f"**Ordem — R$ {capital:,.0f} por perna**\n\n"
+            f"{_l} **{_sz['q_long']}** {L} a ~R$ {_sz['p_long']:.2f}\n\n"
+            f"{_s} **{_sz['q_short']}** {S} a ~R$ {_sz['p_short']:.2f}\n\n"
+            f"resíduo de lote {_sz['residuo_pct']:+.2%}".replace(",", "."))
 
 # --- métricas em 2 colunas ----------------------------------------------------
 m1, m2 = st.columns(2)
@@ -214,7 +238,7 @@ m1.markdown(metric_card("Z-Score", f"{ps.z_now:+.3f}", "", z_tone(ps.z_now, cfg)
             unsafe_allow_html=True)
 mom = {True: "esticando", False: "revertendo", None: "parado"}[sig.esticando]
 m2.markdown(metric_card("d|z| · 1 pregão", f"{ps.dz_now:+.3f}",
-                        f"{mom} · ruído {ps.dz_noise:.3f}", "accent"),
+                        f"{mom} · ruído {ps.dz_noise:.3f}", "neutral"),
             unsafe_allow_html=True)
 
 if ps.hl is None:
@@ -232,7 +256,7 @@ m3, m4 = st.columns(2)
 m3.markdown(metric_card("Meia-vida", hl_v, hl_s, hl_t), unsafe_allow_html=True)
 m4.markdown(metric_card("Edge líquido", f"{edge:+.2f} z",
                         f"break-even {z_be:.2f} z",
-                        "long" if edge > 0.30 else "short" if edge < 0 else "weak"),
+                        "pass" if edge > 0.30 else "short" if edge < 0 else "weak"),
             unsafe_allow_html=True)
 
 m5, m6 = st.columns(2)
@@ -255,7 +279,9 @@ def pv_card(label, p, ok_txt, bad_txt):
 
 m6.markdown(pv_card("Cointegração p", ps.coint_p, "cointegrado", "fraco"),
             unsafe_allow_html=True)
-st.markdown(pv_card("ADF do spread p", ps.adf_p, "estacionário",
+# meia coluna: em largura cheia o valor de 20px ficava perdido em 640px
+m7, _ = st.columns(2)
+m7.markdown(pv_card("ADF do spread p", ps.adf_p, "estacionário",
                     "não estacionário"), unsafe_allow_html=True)
 
 if z_be > z_exit:
@@ -296,7 +322,8 @@ for mult, color in ((z_alert, C_SHORT), (-z_alert, C_LONG)):
                              line=dict(color=color, width=1, dash="dot")),
                   row=2, col=1)
 
-style_fig(fig, height=460, top_margin=50, legend_y=1.06)
+# top_margin 50 cortava a legenda (ela ocupa 24→53px numa margem de 50px).
+style_fig(fig, height=460, top_margin=80, legend_y=1.075)
 fig.update_annotations(font=dict(size=12, color=C_MUTED))
 st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG)
 
