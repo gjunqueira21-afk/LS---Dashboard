@@ -747,7 +747,7 @@ O backtest tem duas regras que este painel não implementa:
 > emitido é a única amostra out-of-sample limpa que ainda pode existir.
     """)
 
-st.caption(f"Dados via Yahoo Finance · último pregão {ps.last_date:%d/%m/%Y} · "
+st.caption(f"Dados via brapi.dev (B3) · último pregão {ps.last_date:%d/%m/%Y} · "
            f"página renderizada {datetime.now():%H:%M:%S}")
 
 # Auto-refresh no FIM do script — antes ele ficava ANTES de todo o cálculo,
