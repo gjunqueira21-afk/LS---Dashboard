@@ -1,25 +1,34 @@
 """Camada de dados do LS Dashboard: resolucao de ticker + download resiliente.
 
-Por que Ticker.history e nao yf.download: `yf.download` engole TODO erro num
-DataFrame vazio -- ticker inexistente, rate limit e Yahoo fora do ar sao
-indistinguiveis. `Ticker.history` propaga excecao tipada, o que permite dar ao
-usuario uma mensagem util em vez de "verifique os tickers".
+Fonte de dados: **brapi.dev** (API nativa da B3). Preços históricos vêm do
+endpoint /api/quote/{ticker}?range=...&interval=1d. Usa-se o token PRO
+(secrets BRAPI_TOKEN ou variável de ambiente) para histórico completo e sem
+limite de requisições.
+
+Por que classificar o erro: uma resposta vazia pode ser ticker inexistente,
+token inválido, brapi fora do ar ou rate limit -- indistinguíveis se tratados
+como "DataFrame vazio". Aqui cada caso vira um DataError tipado com mensagem
+útil ao usuário.
 """
 
 from __future__ import annotations
 
+import os
 import time as _time
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import requests
 import streamlit as st
-import yfinance as yf
 
 from tickers import Symbol, normalize_ticker
 
 TZ_BR = ZoneInfo("America/Sao_Paulo")
+
+BRAPI_URL = "https://brapi.dev/api/quote/{ticker}"
+BRAPI_TIMEOUT = 20
 
 # Baixa sempre a janela maxima e recorta em memoria: 1 entrada de cache por
 # ticker em vez de 5 (uma por opcao do seletor). Trocar "2 anos" -> "5 anos"
@@ -27,13 +36,16 @@ TZ_BR = ZoneInfo("America/Sao_Paulo")
 MAX_PERIOD = "5y"
 PERIOD_DAYS = {"6mo": 183, "1y": 365, "2y": 730, "3y": 1095, "5y": 1826}
 
+# range aceitos pelo brapi; period fora disso cai no MAX_PERIOD.
+_BRAPI_RANGES = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
+
 
 class DataError(Exception):
     """Falha de obtencao de dados ja classificada e com mensagem para o usuario."""
 
     def __init__(self, kind: str, message: str, symbol: str = "", retryable: bool = False):
         super().__init__(message)
-        self.kind = kind            # not_found | rate_limit | source_down | network | empty
+        self.kind = kind            # not_found | rate_limit | source_down | network | empty | auth
         self.message = message
         self.symbol = symbol
         self.retryable = retryable
@@ -43,10 +55,32 @@ class DataError(Exception):
 class SeriesResult:
     """Serie de fechamentos + tudo que a UI precisa saber sobre a origem dela."""
     series: pd.Series
-    symbol: str                     # simbolo Yahoo efetivamente usado
+    symbol: str                     # simbolo resolvido efetivamente usado
     display: str                    # rotulo curto para a UI
     resolution_note: str = ""       # "petr4 -> PETR4.SA" (vazio se trivial)
     warnings: list = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Token
+# ---------------------------------------------------------------------------
+def _brapi_token() -> str:
+    """Token do brapi.dev: st.secrets['BRAPI_TOKEN'] ou env BRAPI_TOKEN."""
+    try:
+        tok = st.secrets.get("BRAPI_TOKEN", "")
+        if tok:
+            return str(tok).strip()
+    except Exception:
+        pass
+    return os.environ.get("BRAPI_TOKEN", "").strip()
+
+
+def _brapi_ticker(symbol: str) -> str:
+    """Converte o simbolo interno (PETR4.SA) no ticker B3 que o brapi usa (PETR4)."""
+    s = symbol.strip().upper()
+    if s.endswith(".SA"):
+        s = s[:-3]
+    return s
 
 
 # ---------------------------------------------------------------------------
@@ -56,9 +90,7 @@ def cache_bucket(now: datetime | None = None) -> int:
     """Balde de tempo que invalida o cache na granularidade certa.
 
     Dado diario so muda de verdade durante o pregao (a barra de hoje e viva).
-    Fora do pregao a serie esta congelada e recarregar e desperdicio -- era
-    assim que o ttl=30 antigo queimava ~120 downloads/hora por ticker para
-    receber bytes identicos, e era assim que se ganhava um 429 do Yahoo.
+    Fora do pregao a serie esta congelada e recarregar e desperdicio.
 
       pregao B3 (seg-sex, 10:00-18:30)  -> balde de 60s
       resto do dia util                 -> balde de 15min
@@ -81,73 +113,105 @@ def cache_bucket(now: datetime | None = None) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Download
+# Download (brapi.dev)
 # ---------------------------------------------------------------------------
-def _classify(exc: Exception, symbol: str) -> DataError:
-    """Traduz excecao do yfinance em erro classificado com mensagem util."""
-    name = type(exc).__name__
-    msg = str(exc)
-
-    if name == "YFRateLimitError" or "429" in msg or "Too Many Requests" in msg:
+def _classify_http(status: int, symbol: str, body: str = "") -> DataError:
+    """Traduz status HTTP do brapi em erro classificado com mensagem util."""
+    if status in (401, 403):
+        return DataError(
+            "auth",
+            "O brapi.dev recusou a autenticacao (token invalido ou ausente). "
+            "Confira o BRAPI_TOKEN em .streamlit/secrets.toml.",
+            symbol,
+        )
+    if status == 404:
+        return DataError(
+            "not_found",
+            f"O ticker **{symbol}** nao foi encontrado no brapi.dev.",
+            symbol,
+        )
+    if status == 429:
         return DataError(
             "rate_limit",
-            "O Yahoo Finance bloqueou temporariamente as requisicoes (rate limit). "
+            "O brapi.dev bloqueou temporariamente as requisicoes (rate limit). "
             "Aguarde cerca de 1 minuto e tente de novo.",
             symbol, retryable=True,
         )
-    # 404 cru: o Yahoo responde 404 + "symbol may be delisted" p/ ticker inexistente.
-    # Sem esta regra o erro vira "fonte fora do ar" e o fallback de sufixo nao anda.
-    if name in ("YFPricesMissingError", "YFTickerMissingError", "YFTzMissingError") \
-            or "404" in msg or "Not Found" in msg or "may be delisted" in msg:
+    if status >= 500:
         return DataError(
-            "not_found",
-            f"O simbolo **{symbol}** nao existe no Yahoo Finance (ou foi deslistado).",
-            symbol,
-        )
-    if name == "YFDataException" or "CURRENTLY DOWN" in msg.upper():
-        return DataError(
-            "source_down", "O Yahoo Finance esta fora do ar. Tente em alguns minutos.",
+            "source_down", "O brapi.dev esta instavel (erro 5xx). Tente em alguns minutos.",
             symbol, retryable=True,
         )
-    if any(k in name for k in ("Timeout", "Connection", "SSL", "Proxy")) or "timed out" in msg.lower():
-        return DataError(
-            "network", "Falha de rede ao falar com o Yahoo Finance. Verifique a conexao.",
-            symbol, retryable=True,
-        )
-    return DataError("source_down", f"Erro inesperado no download de {symbol}: {name}: {msg[:160]}",
+    return DataError("source_down",
+                     f"Resposta inesperada do brapi.dev para {symbol} (HTTP {status}). {body[:120]}",
                      symbol, retryable=True)
 
 
 def _download_once(symbol: str, period: str) -> pd.Series:
-    """Uma tentativa contra o Yahoo, com excecao tipada."""
-    tk = yf.Ticker(symbol)
+    """Uma tentativa contra o brapi.dev, com excecao tipada."""
+    tk = _brapi_ticker(symbol)
+    rng = period if period in _BRAPI_RANGES else MAX_PERIOD
+    params = {"range": rng, "interval": "1d"}
+    token = _brapi_token()
+    if token:
+        params["token"] = token
+
     try:
-        # yfinance >= 1.5 depreciou raise_errors em favor do config global.
-        if hasattr(yf, "config"):
-            yf.config.debug.hide_exceptions = False
-            hist = tk.history(period=period, interval="1d", auto_adjust=True)
-        else:
-            hist = tk.history(period=period, interval="1d", auto_adjust=True, raise_errors=True)
-    except Exception as exc:
-        raise _classify(exc, symbol) from exc
+        resp = requests.get(BRAPI_URL.format(ticker=tk), params=params, timeout=BRAPI_TIMEOUT)
+    except requests.exceptions.RequestException as exc:
+        raise DataError("network",
+                        "Falha de rede ao falar com o brapi.dev. Verifique a conexao.",
+                        symbol, retryable=True) from exc
 
-    if hist is None or hist.empty or "Close" not in hist:
+    if resp.status_code != 200:
+        # brapi devolve JSON de erro com mensagem util em alguns casos
+        body = ""
+        try:
+            body = resp.json().get("message", "") or resp.text
+        except Exception:
+            body = resp.text
+        raise _classify_http(resp.status_code, symbol, body)
+
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise DataError("source_down", f"brapi.dev devolveu resposta nao-JSON para {symbol}.",
+                        symbol, retryable=True) from exc
+
+    if data.get("error"):
         raise DataError("not_found",
-                        f"O Yahoo nao devolveu nenhum pregao para **{symbol}**.", symbol)
+                        f"brapi.dev: {data.get('message', 'ticker nao encontrado')} ({symbol}).",
+                        symbol)
 
-    close = hist["Close"]
-    if isinstance(close, pd.DataFrame):          # MultiIndex em algumas versoes
-        close = close.iloc[:, 0]
+    results = data.get("results") or []
+    if not results:
+        raise DataError("not_found", f"brapi.dev nao retornou dados para **{symbol}**.", symbol)
 
-    # CRITICO: Ticker.history devolve indice tz-aware NA BOLSA DE ORIGEM
-    # (America/Sao_Paulo p/ .SA, America/New_York p/ US). Sem normalizar,
-    # concat de um par cross-market casa ZERO linhas.
-    idx = pd.DatetimeIndex(close.index)
-    if idx.tz is not None:
-        idx = idx.tz_localize(None)
-    close.index = idx.normalize()
+    hist = results[0].get("historicalDataPrice") or []
+    if not hist:
+        raise DataError("not_found",
+                        f"brapi.dev nao devolveu historico de precos para **{symbol}**.", symbol)
+
+    dates, closes = [], []
+    for row in hist:
+        d = row.get("date")
+        c = row.get("adjustedClose")
+        if c is None:
+            c = row.get("close")
+        if d is None or c is None:
+            continue
+        dates.append(d)
+        closes.append(c)
+
+    if not dates:
+        raise DataError("empty", f"brapi.dev devolveu historico vazio para **{symbol}**.", symbol)
+
+    # date do brapi e unix (segundos, UTC). Normaliza pra data BR sem tz, igual
+    # ao resto do app, pra que o concat de um par case as linhas certas.
+    idx = pd.to_datetime(dates, unit="s", utc=True).tz_convert(TZ_BR).tz_localize(None).normalize()
+    close = pd.Series(closes, index=idx, dtype="float64")
     close = close[~close.index.duplicated(keep="last")].sort_index()
-    return close.dropna().astype(float)
+    return close.dropna()
 
 
 def _download_with_retry(symbol: str, period: str, attempts: int = 3) -> pd.Series:
@@ -181,8 +245,7 @@ def _fetch_cached(symbol: str, _bucket: int) -> pd.Series:
 def _resolve_cached(candidates: tuple, _bucket_day: int) -> str:
     """Descobre qual candidato realmente existe.
 
-    Cache de 24h: a resposta de 'PETR4.SA existe?' nao muda ao longo do dia,
-    entao o fallback custa UMA chamada extra por dia, nao uma por rerun. Para
+    Cache de 24h: a resposta de 'PETR4 existe?' nao muda ao longo do dia. Para
     ticker B3 (99% do uso) candidates tem 1 item e isso nem e chamado.
     """
     last: DataError | None = None
@@ -192,20 +255,19 @@ def _resolve_cached(candidates: tuple, _bucket_day: int) -> str:
             return cand
         except DataError as err:
             if err.kind != "not_found":
-                raise           # Yahoo caiu / rate limit: nao vire "nao existe"
+                raise           # brapi caiu / rate limit / auth: nao vire "nao existe"
             last = err
     tried = " / ".join(candidates)
     raise DataError("not_found",
-                    f"Nenhum simbolo encontrado no Yahoo Finance. Tentei: {tried}.",
+                    f"Nenhum simbolo encontrado no brapi.dev. Tentei: {tried}.",
                     candidates[0]) from last
 
 
 def fetch_series(user_input: str, period: str) -> SeriesResult:
     """Ponto de entrada da UI: recebe o que o usuario digitou, devolve a serie.
 
-    Resolve o ticker (petr4 -> PETR4.SA), tenta o fallback quando ha
-    ambiguidade, baixa o historico maximo uma unica vez e recorta o periodo
-    pedido em memoria.
+    Resolve o ticker (petr4 -> PETR4.SA), baixa o historico maximo uma unica vez
+    e recorta o periodo pedido em memoria.
     """
     sym: Symbol = normalize_ticker(user_input)
     if not sym.candidates:
@@ -261,8 +323,7 @@ def align_pair(long_s: pd.Series, short_s: pd.Series) -> Alignment:
 
     pd.concat(...).dropna() joga fora, em silencio, todo pregao em que um dos
     ativos nao negociou (feriado de outra praca, leilao, suspensao). Em par
-    B3 x B3 isso e ~0%; em PETR4.SA x AAPL passa de 5% da amostra -- e e
-    justamente o caso em que a cointegracao fica enviesada.
+    B3 x B3 isso e ~0%.
     """
     joined = pd.concat([long_s.rename("long"), short_s.rename("short")],
                        axis=1, join="outer").sort_index()
