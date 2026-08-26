@@ -60,20 +60,26 @@ with st.sidebar:
     st.title("Configurações")
 
     st.subheader("Par")
+    # Defaults vivem no session_state (nao em value=): assim os widgets abaixo
+    # usam so a key, sem o warning "created with a default value but also had
+    # its value set via the Session State API".
+    st.session_state.setdefault("in_long", "PETR4")
+    st.session_state.setdefault("in_short", "VALE3")
+
     # A troca precisa acontecer ANTES dos widgets existirem: o Streamlit
     # proíbe reescrever a chave de um widget já instanciado no mesmo run.
     if st.session_state.pop("_do_swap", False):
-        a = st.session_state.get("in_long", "PETR4")
-        b = st.session_state.get("in_short", "VALE3")
+        a = st.session_state["in_long"]
+        b = st.session_state["in_short"]
         st.session_state["in_long"], st.session_state["in_short"] = b, a
 
     c1, c2 = st.columns(2)
     with c1:
-        long_in = st.text_input("LONG", value="PETR4", key="in_long",
+        long_in = st.text_input("LONG", key="in_long",
                                 help="Digite só o ticker: petr4, vale3, bova11, "
                                      "aapl, ibov. O sufixo .SA é automático.")
     with c2:
-        short_in = st.text_input("SHORT", value="VALE3", key="in_short")
+        short_in = st.text_input("SHORT", key="in_short")
 
     if st.button("⇄ inverter par", width="stretch"):
         st.session_state["_do_swap"] = True
@@ -166,10 +172,17 @@ with st.sidebar:
         capital = st.number_input("Capital por perna (R$)", 1_000, 50_000_000,
                                   100_000, 10_000)
 
-    with st.expander("API", expanded=False):
+    with st.expander("Conexões", expanded=False):
         api_key = st.text_input("Anthropic API Key",
                                 value=get_secret("ANTHROPIC_API_KEY", ""),
                                 type="password", placeholder="sk-ant-...")
+        brapi_token = st.text_input("brapi.dev Token (PRO)",
+                                    value=get_secret("BRAPI_TOKEN", ""),
+                                    type="password", placeholder="token do brapi.dev",
+                                    help="Dados de preço da B3. Pré-preenchido pelo "
+                                         "secrets do servidor, se configurado.")
+        # Disponibiliza o token pro datasource (que roda em cache).
+        st.session_state["_brapi_token_ui"] = brapi_token.strip()
 
     st.divider()
     auto_refresh = st.toggle("Auto-refresh no pregão (60s)", value=False)
@@ -609,7 +622,7 @@ with tab_s:
 
 with tab_ia:
     if not api_key:
-        st.info("Adicione sua Anthropic API Key no expander **API** da barra "
+        st.info("Adicione sua Anthropic API Key no expander **Conexões** da barra "
                 "lateral para ativar a análise.")
     else:
         # o hash inclui os gatilhos: a análise antiga citava parâmetros que
