@@ -1,27 +1,25 @@
 services:
   app:
     build: .
+    container_name: ls-dashboard
     restart: unless-stopped
     expose:
-      - "8501"                       # só interno; o Caddy expõe pra internet
+      - "8501"                       # interno; o Traefik faz o ingress + HTTPS
     volumes:
       # A API key vive num arquivo no servidor, montado só-leitura.
       # Crie .streamlit/secrets.toml antes de subir (veja DEPLOY.md).
       - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
+    labels:
+      - "traefik.enable=true"
+      # >>> troque SEU_DOMINIO_AQUI pelo seu domínio (registro A -> IP da VPS) <<<
+      - "traefik.http.routers.ls-dashboard.rule=Host(`SEU_DOMINIO_AQUI`)"
+      - "traefik.http.routers.ls-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.ls-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.services.ls-dashboard.loadbalancer.server.port=8501"
+    networks:
+      - default
 
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data             # guarda os certificados HTTPS (persistente)
-      - caddy_config:/config
-    depends_on:
-      - app
-
-volumes:
-  caddy_data:
-  caddy_config:
+# O Traefik (host network) alcanca o container pela rede bridge padrao do compose,
+# do mesmo jeito que ja faz com seus outros apps (ex.: oly-market-watch, bolsonoazul).
+networks:
+  default:
