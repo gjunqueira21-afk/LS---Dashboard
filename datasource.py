@@ -155,17 +155,20 @@ def _classify_http(status: int, symbol: str, body: str = "") -> DataError:
                      symbol, retryable=True)
 
 
-def _download_once(symbol: str, period: str) -> pd.Series:
+def _download_once(symbol: str, period: str, token: str = "") -> pd.Series:
     """Uma tentativa contra o brapi.dev, com excecao tipada."""
     tk = _brapi_ticker(symbol)
     rng = period if period in _BRAPI_RANGES else MAX_PERIOD
     params = {"range": rng, "interval": "1d"}
-    token = _brapi_token()
+    headers = {}
     if token:
+        # Query param E header: cobre as duas formas de auth que o brapi aceita.
         params["token"] = token
+        headers["Authorization"] = f"Bearer {token}"
 
     try:
-        resp = requests.get(BRAPI_URL.format(ticker=tk), params=params, timeout=BRAPI_TIMEOUT)
+        resp = requests.get(BRAPI_URL.format(ticker=tk), params=params,
+                            headers=headers, timeout=BRAPI_TIMEOUT)
     except requests.exceptions.RequestException as exc:
         raise DataError("network",
                         "Falha de rede ao falar com o brapi.dev. Verifique a conexao.",
@@ -222,13 +225,14 @@ def _download_once(symbol: str, period: str) -> pd.Series:
     return close.dropna()
 
 
-def _download_with_retry(symbol: str, period: str, attempts: int = 3) -> pd.Series:
+def _download_with_retry(symbol: str, period: str, attempts: int = 3,
+                         token: str = "") -> pd.Series:
     """Backoff exponencial apenas para erros retentaveis. 'Nao existe' falha na hora."""
     delay = 0.8
     last: DataError | None = None
     for i in range(attempts):
         try:
-            return _download_once(symbol, period)
+            return _download_once(symbol, period, token)
         except DataError as err:
             if not err.retryable:
                 raise
@@ -240,17 +244,21 @@ def _download_with_retry(symbol: str, period: str, attempts: int = 3) -> pd.Seri
 
 
 @st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
-def _fetch_cached(symbol: str, _bucket: int) -> pd.Series:
+def _fetch_cached(symbol: str, _bucket: int, token: str) -> pd.Series:
     """Camada cacheada: 1 entrada por simbolo, historico maximo.
 
     ttl=3600 e so a rede de seguranca; quem manda na invalidacao e _bucket.
     Excecoes nao sao cacheadas pelo Streamlit -- falha nao fica grudada.
+
+    O token e argumento EXPLICITO (e parte da chave de cache): resolver via
+    session_state aqui dentro falhava em sessao nova, e colar um token valido
+    nao invalidava o cache de uma tentativa sem token.
     """
-    return _download_with_retry(symbol, MAX_PERIOD)
+    return _download_with_retry(symbol, MAX_PERIOD, token=token)
 
 
 @st.cache_data(ttl=86400, max_entries=256, show_spinner=False)
-def _resolve_cached(candidates: tuple, _bucket_day: int) -> str:
+def _resolve_cached(candidates: tuple, _bucket_day: int, token: str) -> str:
     """Descobre qual candidato realmente existe.
 
     Cache de 24h: a resposta de 'PETR4 existe?' nao muda ao longo do dia. Para
@@ -259,7 +267,7 @@ def _resolve_cached(candidates: tuple, _bucket_day: int) -> str:
     last: DataError | None = None
     for cand in candidates:
         try:
-            _download_with_retry(cand, "5d", attempts=2)
+            _download_with_retry(cand, "5d", attempts=2, token=token)
             return cand
         except DataError as err:
             if err.kind != "not_found":
@@ -283,12 +291,16 @@ def fetch_series(user_input: str, period: str) -> SeriesResult:
 
     warnings = [sym.note] if sym.note else []
 
+    # Resolve o token UMA vez, no contexto normal do script (fora do cache),
+    # e o injeta explicitamente nas camadas cacheadas.
+    token = _brapi_token()
+
     if len(sym.candidates) == 1:
         resolved = sym.candidates[0]
     else:
-        resolved = _resolve_cached(sym.candidates, int(_time.time()) // 86400)
+        resolved = _resolve_cached(sym.candidates, int(_time.time()) // 86400, token)
 
-    full = _fetch_cached(resolved, cache_bucket())
+    full = _fetch_cached(resolved, cache_bucket(), token)
 
     days = PERIOD_DAYS.get(period, PERIOD_DAYS["2y"])
     cutoff = full.index.max() - timedelta(days=days)

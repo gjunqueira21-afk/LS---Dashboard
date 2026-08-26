@@ -5,14 +5,22 @@ services:
     restart: unless-stopped
     expose:
       - "8501"                       # interno; o Traefik faz o ingress + HTTPS
+    # Segredos vêm do arquivo .env na raiz do projeto (na VPS, fora do git):
+    #   BRAPI_TOKEN=...
+    #   ANTHROPIC_API_KEY=sk-ant-...
+    # O docker compose lê o .env automaticamente e as linhas abaixo injetam
+    # os valores no container. Sem .env, ficam vazios e o app pede na UI.
+    environment:
+      - BRAPI_TOKEN=${BRAPI_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    # Monta o DIRETORIO .streamlit (nao o arquivo secrets.toml): bind de
+    # arquivo inexistente faz o Docker criar um diretorio fantasma no host,
+    # que depois impede qualquer `cat > secrets.toml` de funcionar.
     volumes:
-      # A API key vive num arquivo no servidor, montado só-leitura.
-      # Crie .streamlit/secrets.toml antes de subir (veja DEPLOY.md).
-      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
+      - ./.streamlit:/app/.streamlit:ro
     labels:
       - "traefik.enable=true"
-      # >>> troque SEU_DOMINIO_AQUI pelo seu domínio (registro A -> IP da VPS) <<<
-      - "traefik.http.routers.ls-dashboard.rule=Host(`SEU_DOMINIO_AQUI`)"
+      - "traefik.http.routers.ls-dashboard.rule=Host(`longshort.marketwatchrf.com`)"
       - "traefik.http.routers.ls-dashboard.entrypoints=websecure"
       - "traefik.http.routers.ls-dashboard.tls.certresolver=letsencrypt"
       - "traefik.http.services.ls-dashboard.loadbalancer.server.port=8501"
