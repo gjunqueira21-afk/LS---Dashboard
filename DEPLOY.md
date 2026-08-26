@@ -38,6 +38,28 @@ naquela sessão do navegador.
 > **Atenção:** se existir um *diretório* chamado `secrets.toml` (criado por um
 > bind mount antigo do Docker), remova antes: `rm -rf .streamlit/secrets.toml`.
 
+## Senha de acesso (Basic Auth via Traefik)
+
+O site pede usuário e senha antes de abrir (janela do navegador). As
+credenciais ficam no `.env` como hash — a senha nunca aparece em texto puro
+nem vai pro git.
+
+```bash
+cd ~/LS---Dashboard
+# gera o hash (digite a senha 2x; ela fica oculta)
+HASH=$(openssl passwd -apr1)
+# grava no .env (troque "gustavo" pelo usuário que quiser)
+echo "LS_AUTH_USERS=gustavo:$HASH" >> .env
+docker compose up -d
+```
+
+- Trocar a senha: apague a linha `LS_AUTH_USERS` do `.env`, repita os
+  comandos acima e rode `docker compose up -d`.
+- Mais de um usuário: separe por vírgula
+  (`LS_AUTH_USERS=ana:hash1,beto:hash2`).
+- Sem `LS_AUTH_USERS` no `.env`, o `docker compose up` falha de propósito com
+  uma mensagem clara — melhor do que subir o site aberto sem querer.
+
 ## Comandos do dia a dia
 
 | Ação | Comando |
