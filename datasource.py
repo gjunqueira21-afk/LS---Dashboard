@@ -65,7 +65,15 @@ class SeriesResult:
 # Token
 # ---------------------------------------------------------------------------
 def _brapi_token() -> str:
-    """Token do brapi.dev: st.secrets['BRAPI_TOKEN'] ou env BRAPI_TOKEN."""
+    """Token do brapi.dev, em ordem de prioridade:
+    campo colado na UI (session_state) -> secrets BRAPI_TOKEN -> env BRAPI_TOKEN.
+    """
+    try:
+        ui = st.session_state.get("_brapi_token_ui", "")
+        if ui:
+            return str(ui).strip()
+    except Exception:
+        pass
     try:
         tok = st.secrets.get("BRAPI_TOKEN", "")
         if tok:
