@@ -24,6 +24,12 @@ services:
       - "traefik.http.routers.ls-dashboard.entrypoints=websecure"
       - "traefik.http.routers.ls-dashboard.tls.certresolver=letsencrypt"
       - "traefik.http.services.ls-dashboard.loadbalancer.server.port=8501"
+      # Basic Auth: credenciais vem do .env (LS_AUTH_USERS=usuario:hash-apr1).
+      # Gere o hash na VPS com:  openssl passwd -apr1
+      # O :? faz o compose falhar com mensagem clara se a variavel faltar,
+      # em vez de subir o site aberto ou com o router quebrado em silencio.
+      - "traefik.http.routers.ls-dashboard.middlewares=ls-dashboard-auth"
+      - "traefik.http.middlewares.ls-dashboard-auth.basicauth.users=${LS_AUTH_USERS:?defina LS_AUTH_USERS no .env — veja DEPLOY.md}"
     networks:
       - default
 
