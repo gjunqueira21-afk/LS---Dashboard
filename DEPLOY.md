@@ -1,107 +1,59 @@
-# Deploy na VPS — LS Dashboard (Docker + Caddy + HTTPS)
+# Deploy na VPS — LS Dashboard (Docker + Traefik + HTTPS)
 
-Guia para subir o painel Long/Short numa VPS Linux (Ubuntu/Debian) com HTTPS
-automático. O Caddy cuida do certificado (Let's Encrypt) e o Docker isola o app.
+O painel roda num container Docker e entra no **Traefik** já existente na VPS
+via labels — o certificado HTTPS (Let's Encrypt) é automático.
 
-## Pré-requisitos
+URL: **https://longshort.marketwatchrf.com** (registro A → IP da VPS).
 
-- Uma VPS Linux com acesso `sudo`.
-- Um domínio (ou subdomínio) com um registro **A** apontando para o **IP da VPS**.
-  Ex.: `painel.seudominio.com  →  203.0.113.10`
-- Portas **80** e **443** liberadas no firewall da VPS.
-
----
-
-## 1. Instalar o Docker
+## Subir / atualizar
 
 ```bash
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER      # rodar docker sem sudo
-# saia e entre de novo no SSH pra valer o grupo (ou rode: newgrp docker)
-```
-
-Confirme:
-
-```bash
-docker --version
-docker compose version
-```
-
-## 2. Clonar o repositório
-
-```bash
-git clone https://github.com/gjunqueira21-afk/LS---Dashboard.git
-cd LS---Dashboard
-```
-
-## 3. Configurar o domínio no Caddy
-
-Edite o `Caddyfile` e troque `painel.seudominio.com` pelo seu domínio real:
-
-```bash
-nano Caddyfile
-```
-
-## 4. Configurar a API key (análise via Claude)
-
-Crie o arquivo de secrets (ele é ignorado pelo git — fica só no servidor):
-
-```bash
-mkdir -p .streamlit
-cat > .streamlit/secrets.toml <<'EOF'
-ANTHROPIC_API_KEY = "sk-ant-COLE-SUA-CHAVE-AQUI"
-EOF
-chmod 600 .streamlit/secrets.toml
-```
-
-> Se não for usar a IA, pode pular este passo — o app funciona sem a chave
-> (só os gráficos e estatísticas).
-
-## 5. Liberar as portas no firewall
-
-Se usar `ufw`:
-
-```bash
-sudo ufw allow 80
-sudo ufw allow 443
-sudo ufw reload
-```
-
-## 6. Subir o app
-
-```bash
+cd ~/LS---Dashboard
+git pull
 docker compose up -d --build
 ```
 
-Aguarde ~1 minuto (build + Caddy pegando o certificado). Acesse:
+## Segredos (token brapi + chave Anthropic)
 
+Os segredos ficam num arquivo **`.env`** na raiz do projeto, **na VPS**
+(ignorado pelo git e pelo build da imagem). O docker compose injeta os
+valores no container:
+
+```bash
+cat > ~/LS---Dashboard/.env <<'EOF'
+BRAPI_TOKEN=seu-token-pro-do-brapi
+ANTHROPIC_API_KEY=sk-ant-sua-chave
+EOF
+chmod 600 ~/LS---Dashboard/.env
+docker compose up -d          # recria o container com as variáveis
 ```
-https://painel.seudominio.com
-```
 
-Pronto! 🎉
+Com os segredos no servidor, a barra lateral mostra "✅ configurado no
+servidor" e **nunca envia o valor ao navegador** (site é público). Sem
+`.env`, o app mostra campos mascarados pra colar manualmente — válidos só
+naquela sessão do navegador.
 
----
+> Alternativa: `.streamlit/secrets.toml` (formato TOML: `BRAPI_TOKEN = "..."`)
+> também funciona — o diretório `.streamlit/` é montado no container.
+> **Atenção:** se existir um *diretório* chamado `secrets.toml` (criado por um
+> bind mount antigo do Docker), remova antes: `rm -rf .streamlit/secrets.toml`.
 
 ## Comandos do dia a dia
 
 | Ação | Comando |
 |---|---|
-| Ver logs do app | `docker compose logs -f app` |
-| Ver logs do Caddy (HTTPS) | `docker compose logs -f caddy` |
-| Parar | `docker compose down` |
+| Logs do app | `docker compose logs -f app` |
 | Reiniciar | `docker compose restart` |
-| **Atualizar** (após novo commit) | `git pull && docker compose up -d --build` |
+| Parar | `docker compose down` |
+| Atualizar (novo commit) | `git pull && docker compose up -d --build` |
 | Status | `docker compose ps` |
+| Ver se env chegou no container | `docker compose exec app printenv \| grep -E 'BRAPI\|ANTHROPIC'` |
 
 ## Solução de problemas
 
-- **HTTPS não sobe / erro de certificado:** confirme que o A record do domínio
-  aponta pro IP da VPS (`dig +short painel.seudominio.com`) e que as portas 80 e
-  443 estão abertas. O Caddy precisa da porta 80 pra validar o certificado.
-- **App não abre (502):** veja `docker compose logs app`. Normalmente é erro de
-  dependência ou de código; o container reinicia sozinho.
-- **Trocar a API key:** edite `.streamlit/secrets.toml` e rode
-  `docker compose restart app`.
-- **Ver se está de pé sem domínio:** `curl -I http://localhost:8501/_stcore/health`
-  de dentro da VPS deve responder `200 OK`.
+- **"token invalido/ausente" ao Analisar:** confira o `.env` (sem aspas, sem
+  espaços em volta do `=`) e rode `docker compose up -d` pra recriar o
+  container — `restart` sozinho **não** relê o `.env`.
+- **HTTPS não sobe:** confirme o DNS (`dig +short longshort.marketwatchrf.com`
+  deve responder o IP da VPS) e veja os logs do Traefik.
+- **502:** `docker compose logs app`.

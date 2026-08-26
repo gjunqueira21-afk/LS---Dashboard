@@ -6,6 +6,7 @@ que app.py e mobile.py pararam de divergir.
 """
 
 import html
+import os
 import time
 from datetime import datetime
 
@@ -32,10 +33,18 @@ PERIOD_MAP = {"6 meses": "6mo", "1 ano": "1y", "2 anos": "2y",
 
 
 def get_secret(key, default=""):
+    """Segredo do servidor: st.secrets (secrets.toml) ou variável de ambiente.
+
+    Nunca quebra o app se não houver secrets.toml, e cobre o caso do token
+    chegar via `environment:` do docker-compose (arquivo .env na VPS).
+    """
     try:
-        return st.secrets.get(key, default)
+        val = st.secrets.get(key, "")
+        if val:
+            return str(val)
     except Exception:
-        return default
+        pass
+    return os.environ.get(key, default)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -172,17 +181,32 @@ with st.sidebar:
         capital = st.number_input("Capital por perna (R$)", 1_000, 50_000_000,
                                   100_000, 10_000)
 
+    # SEGURANÇA: segredos configurados no servidor NUNCA são enviados ao
+    # navegador (nem mascarados num value= — daria pra extrair via DevTools
+    # num site público). A tela só informa que estão configurados; o valor
+    # real fica no backend.
+    server_api_key = get_secret("ANTHROPIC_API_KEY", "")
+    server_brapi = get_secret("BRAPI_TOKEN", "")
+
     with st.expander("Conexões", expanded=False):
-        api_key = st.text_input("Anthropic API Key",
-                                value=get_secret("ANTHROPIC_API_KEY", ""),
-                                type="password", placeholder="sk-ant-...")
-        brapi_token = st.text_input("brapi.dev Token (PRO)",
-                                    value=get_secret("BRAPI_TOKEN", ""),
-                                    type="password", placeholder="token do brapi.dev",
-                                    help="Dados de preço da B3. Pré-preenchido pelo "
-                                         "secrets do servidor, se configurado.")
-        # Disponibiliza o token pro datasource (que roda em cache).
-        st.session_state["_brapi_token_ui"] = brapi_token.strip()
+        if server_api_key:
+            st.caption("Claude AI · ✅ chave configurada no servidor")
+            api_key = server_api_key
+        else:
+            api_key = st.text_input("Anthropic API Key",
+                                    type="password", placeholder="sk-ant-...").strip()
+
+        if server_brapi:
+            st.caption("brapi.dev · ✅ token configurado no servidor")
+            st.session_state["_brapi_token_ui"] = ""
+        else:
+            brapi_token = st.text_input(
+                "brapi.dev Token (PRO)",
+                type="password", placeholder="token do brapi.dev",
+                help="Dados de preço da B3. Vale só nesta sessão do navegador; "
+                     "para fixar de vez, configure no servidor (arquivo .env).")
+            # Disponibiliza o token colado pro datasource.
+            st.session_state["_brapi_token_ui"] = brapi_token.strip()
 
     st.divider()
     auto_refresh = st.toggle("Auto-refresh no pregão (60s)", value=False)
