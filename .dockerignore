@@ -1,0 +1,11 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+.streamlit/secrets.toml
+node_modules/
+package*.json
+*.log
+.devcontainer/
+DEPLOY.md

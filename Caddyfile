@@ -1,0 +1,6 @@
+# Troque painel.seudominio.com pelo SEU domínio (o A record deve apontar
+# para o IP da VPS). O Caddy obtém e renova o certificado HTTPS sozinho.
+# WebSockets (que o Streamlit usa) já são suportados automaticamente.
+painel.seudominio.com {
+    reverse_proxy app:8501
+}
